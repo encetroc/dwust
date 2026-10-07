@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "skills": {
+    "bevy-best-practices": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "bevy-best-practices/SKILL.md",
+      "computedHash": "aefe44aede429830d6237935652bd0c549785894337b7d5a6a888fcd71369203"
+    },
+    "bevy-frame-cost-profiling": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "bevy-frame-cost-profiling/SKILL.md",
+      "computedHash": "45d3a95f30242d9dd1a6efef979b50acbc0c057cad6fddb862e57d76d7fc5405"
+    },
+    "bevy-grid-relocation-previews": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "bevy-grid-relocation-previews/SKILL.md",
+      "computedHash": "c48607b45f24794601d9cf96b48db3be795ba95177700fe8fa32c96704c93179"
+    },
+    "bevy-headless-verification": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "bevy-headless-verification/SKILL.md",
+      "computedHash": "520efc04ace82b027aff7e240d23b68065131bda46d7bd02acf1ad5664afee1a"
+    },
+    "bevy-procedural-surface-patterns": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "bevy-procedural-surface-patterns/SKILL.md",
+      "computedHash": "f952722393b713b1508db7f4aa423df26399684d21448a873b7aa2f11fca3f01"
+    },
+    "cube-sphere-projection-consistency": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "cube-sphere-projection-consistency/SKILL.md",
+      "computedHash": "486587cc0c825e6d63af4add6f51e3fa7bd3795b8a8da32e1067ab4980845364"
+    },
+    "headless-avian-physics-tests": {
+      "source": "encetroc/bevy-skills",
+      "sourceType": "github",
+      "skillPath": "headless-avian-physics-tests/SKILL.md",
+      "computedHash": "afa78119ecededcae380a4077a81eb3037a1a10c49bd6b415db0108d39a3d30c"
+    }
+  }
+}

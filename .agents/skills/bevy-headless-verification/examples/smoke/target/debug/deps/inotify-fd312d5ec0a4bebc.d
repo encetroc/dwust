@@ -1,0 +1,10 @@
+/home/encetroc/dwust/.agents/skills/bevy-headless-verification/examples/smoke/target/debug/deps/inotify-fd312d5ec0a4bebc.d: /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/lib.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/events.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/fd_guard.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/inotify.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/util.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/watches.rs
+
+/home/encetroc/dwust/.agents/skills/bevy-headless-verification/examples/smoke/target/debug/deps/libinotify-fd312d5ec0a4bebc.rmeta: /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/lib.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/events.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/fd_guard.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/inotify.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/util.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/watches.rs
+
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/lib.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/events.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/fd_guard.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/inotify.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/util.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inotify-0.11.5/src/watches.rs:

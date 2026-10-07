@@ -1,0 +1,12 @@
+/home/encetroc/dwust/.agents/skills/bevy-headless-verification/examples/smoke/target/debug/deps/spin-8740c925c722b59d.d: /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lib.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/barrier.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lazy.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex/spin.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/once.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/relax.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/rwlock.rs
+
+/home/encetroc/dwust/.agents/skills/bevy-headless-verification/examples/smoke/target/debug/deps/libspin-8740c925c722b59d.rmeta: /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lib.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/barrier.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lazy.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex/spin.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/once.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/relax.rs /home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/rwlock.rs
+
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lib.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/barrier.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/lazy.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/mutex/spin.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/once.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/relax.rs:
+/home/encetroc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/spin-0.10.1/src/rwlock.rs:
