@@ -6,7 +6,7 @@ A Dofus-inspired isometric world prototype built with Bevy.
 cargo run
 ```
 
-- Click the ground to move within the current screen.
+- Click the ground to move within the current screen. Player movement finds a route around building footprints and keeps a small clearance; clicking a building routes to its nearest reachable edge instead.
 - Click an edge arrow or press a keyboard arrow to walk to that edge, then enter the adjacent screen. On arrival, a fast eased animation moves the camera and player into the adjacent screen; the player ends at the opposite edge. Clicking the ground cancels pending travel.
 - Screens extend in all four directions; the top-left HUD shows the current screen coordinates.
 - The overlay contains only arrows and screen coordinates. Movement defaults to 14 units/second.

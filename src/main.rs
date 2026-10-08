@@ -8,6 +8,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 
+mod buildings;
 mod config;
 mod headless;
 use config::*;
@@ -147,6 +148,7 @@ fn screen_transition(
 #[derive(Component, Default)]
 struct Player {
     destination: Option<Vec3>,
+    path: Vec<Vec3>,
     travel: Option<ScreenDirection>,
 }
 
@@ -168,7 +170,7 @@ impl Plugin for GamePlugin {
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()
             .add_message::<OverlayInput>()
-            .add_systems(Startup, (setup, setup_overlay))
+            .add_systems(Startup, (setup, setup_overlay, buildings::spawn_buildings))
             .add_systems(PreUpdate, sync_viewport)
             .add_systems(
                 Update,
@@ -481,6 +483,7 @@ fn handle_overlay_and_travel(
             screen_half_extents(viewport.size),
             direction,
         ));
+        player.path.clear();
         player.travel = Some(direction);
     }
 }
@@ -524,6 +527,7 @@ fn finish_travel(
             transform.translation = position;
         }
         player.destination = None;
+        player.path.clear();
         screen.center = center;
         screen.coordinates += direction.grid_offset();
     }
@@ -589,6 +593,7 @@ fn set_destination(
         && let Some(point) = ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
     {
         player.travel = None;
+        player.path.clear();
         player.destination = Some(clamp_to_screen(
             point,
             screen.center,
@@ -597,23 +602,188 @@ fn set_destination(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn move_player(
     time: Res<Time>,
     settings: Res<MovementSettings>,
+    buildings: Query<
+        (&buildings::Building, &Transform),
+        (With<buildings::Building>, Without<Player>),
+    >,
     mut player: Single<(&mut Transform, &mut Player)>,
 ) {
     let (transform, player) = &mut *player;
     let Some(destination) = player.destination else {
         return;
     };
+    if player.path.is_empty() {
+        let obstacles = buildings
+            .iter()
+            .map(|(building, transform)| Obstacle {
+                center: Vec2::new(transform.translation.x, transform.translation.z),
+                half_size: Vec2::new(building.0.x / 2.0, building.0.z / 2.0)
+                    + Vec2::splat(PLAYER_RADIUS + 0.15),
+            })
+            .collect::<Vec<_>>();
+        player.path = find_path(transform.translation, destination, &obstacles);
+    }
+    let Some(waypoint) = player.path.first().copied() else {
+        player.destination = None;
+        player.travel = None;
+        return;
+    };
     transform.translation = step_toward(
         transform.translation,
-        destination,
+        waypoint,
         settings.speed * time.delta_secs(),
     );
-    if transform.translation == destination {
-        player.destination = None;
+    if transform.translation.distance_squared(waypoint) < 0.0001 {
+        transform.translation = waypoint;
+        player.path.remove(0);
+        if player.path.is_empty() {
+            player.destination = None;
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+struct Obstacle {
+    center: Vec2,
+    half_size: Vec2,
+}
+
+impl Obstacle {
+    fn min(self) -> Vec2 {
+        self.center - self.half_size
+    }
+
+    fn max(self) -> Vec2 {
+        self.center + self.half_size
+    }
+
+    fn contains(self, point: Vec2) -> bool {
+        let min = self.min();
+        let max = self.max();
+        point.x > min.x && point.x < max.x && point.y > min.y && point.y < max.y
+    }
+
+    fn corners(self, height: f32) -> [Vec3; 4] {
+        let min = self.min();
+        let max = self.max();
+        [
+            Vec3::new(min.x, height, min.y),
+            Vec3::new(min.x, height, max.y),
+            Vec3::new(max.x, height, min.y),
+            Vec3::new(max.x, height, max.y),
+        ]
+    }
+}
+
+fn segment_hits_obstacle(start: Vec2, end: Vec2, obstacle: Obstacle) -> bool {
+    // Shrink very slightly so routes may safely follow the expanded perimeter.
+    let min = obstacle.min() + Vec2::splat(0.001);
+    let max = obstacle.max() - Vec2::splat(0.001);
+    let delta = end - start;
+    let mut enter: f32 = 0.0;
+    let mut exit: f32 = 1.0;
+    for (origin, direction, low, high) in [
+        (start.x, delta.x, min.x, max.x),
+        (start.y, delta.y, min.y, max.y),
+    ] {
+        if direction.abs() < f32::EPSILON {
+            if origin <= low || origin >= high {
+                return false;
+            }
+            continue;
+        }
+        let a = (low - origin) / direction;
+        let b = (high - origin) / direction;
+        enter = enter.max(a.min(b));
+        exit = exit.min(a.max(b));
+        if enter >= exit {
+            return false;
+        }
+    }
+    enter < 1.0 && exit > 0.0 && enter < exit
+}
+
+fn find_path(start: Vec3, destination: Vec3, obstacles: &[Obstacle]) -> Vec<Vec3> {
+    let mut end_2d = Vec2::new(destination.x, destination.z);
+    if let Some(obstacle) = obstacles.iter().find(|obstacle| obstacle.contains(end_2d)) {
+        end_2d = obstacle
+            .corners(destination.y)
+            .into_iter()
+            .filter(|corner| {
+                !obstacles
+                    .iter()
+                    .any(|other| other.contains(Vec2::new(corner.x, corner.z)))
+            })
+            .min_by(|a, b| {
+                Vec2::new(a.x, a.z)
+                    .distance_squared(end_2d)
+                    .total_cmp(&Vec2::new(b.x, b.z).distance_squared(end_2d))
+            })
+            .map(|point| Vec2::new(point.x, point.z))
+            .unwrap_or(end_2d);
+    }
+
+    let mut nodes = vec![start, Vec3::new(end_2d.x, destination.y, end_2d.y)];
+    for obstacle in obstacles {
+        nodes.extend(obstacle.corners(start.y).into_iter().filter(|corner| {
+            !obstacles
+                .iter()
+                .any(|other| other.contains(Vec2::new(corner.x, corner.z)))
+        }));
+    }
+    let count = nodes.len();
+    let mut distances = vec![f32::INFINITY; count];
+    let mut previous = vec![None; count];
+    let mut visited = vec![false; count];
+    distances[0] = 0.0;
+    for _ in 0..count {
+        let Some(current) = (0..count)
+            .filter(|&index| !visited[index])
+            .min_by(|&a, &b| distances[a].total_cmp(&distances[b]))
+        else {
+            break;
+        };
+        if !distances[current].is_finite() || current == 1 {
+            break;
+        }
+        visited[current] = true;
+        for next in 0..count {
+            if visited[next]
+                || obstacles.iter().any(|obstacle| {
+                    segment_hits_obstacle(
+                        Vec2::new(nodes[current].x, nodes[current].z),
+                        Vec2::new(nodes[next].x, nodes[next].z),
+                        *obstacle,
+                    )
+                })
+            {
+                continue;
+            }
+            let distance = distances[current] + nodes[current].distance(nodes[next]);
+            if distance < distances[next] {
+                distances[next] = distance;
+                previous[next] = Some(current);
+            }
+        }
+    }
+    if !distances[1].is_finite() {
+        return Vec::new();
+    }
+    let mut path = vec![nodes[1]];
+    let mut current = 1;
+    while let Some(parent) = previous[current] {
+        if parent == 0 {
+            break;
+        }
+        path.push(nodes[parent]);
+        current = parent;
+    }
+    path.reverse();
+    path
 }
 
 fn step_toward(position: Vec3, destination: Vec3, max_distance: f32) -> Vec3 {
@@ -874,6 +1044,7 @@ mod tests {
                 .spawn((
                     Player {
                         destination: None,
+                        path: Vec::new(),
                         travel: Some(ScreenDirection::Right),
                     },
                     Transform::from_translation(origin),
@@ -997,5 +1168,45 @@ mod tests {
         let destination = Vec3::new(1.0, PLAYER_HEIGHT / 2.0, 1.0);
         assert_eq!(step_toward(Vec3::ZERO, destination, 10.0), destination);
         assert_eq!(step_toward(destination, destination, 0.0), destination);
+    }
+
+    #[test]
+    fn pathfinding_routes_around_building_footprints_with_player_clearance() {
+        let obstacle = Obstacle {
+            center: Vec2::ZERO,
+            half_size: Vec2::new(2.0, 1.0) + Vec2::splat(PLAYER_RADIUS + 0.15),
+        };
+        let start = Vec3::new(-5.0, PLAYER_HEIGHT / 2.0, 0.0);
+        let end = Vec3::new(5.0, PLAYER_HEIGHT / 2.0, 0.0);
+        let path = find_path(start, end, &[obstacle]);
+        assert!(path.len() >= 2, "path should detour around the building");
+        let mut previous = start;
+        for waypoint in path {
+            assert!(
+                !segment_hits_obstacle(
+                    Vec2::new(previous.x, previous.z),
+                    Vec2::new(waypoint.x, waypoint.z),
+                    obstacle
+                ),
+                "path segment intersects the expanded building footprint"
+            );
+            previous = waypoint;
+        }
+    }
+
+    #[test]
+    fn click_inside_building_is_rerouted_to_its_nearest_clear_corner() {
+        let obstacle = Obstacle {
+            center: Vec2::ZERO,
+            half_size: Vec2::splat(2.0),
+        };
+        let path = find_path(
+            Vec3::new(-5.0, PLAYER_HEIGHT / 2.0, 0.0),
+            Vec3::new(0.0, PLAYER_HEIGHT / 2.0, 0.0),
+            &[obstacle],
+        );
+        assert!(!path.is_empty());
+        let end = *path.last().unwrap();
+        assert!(!obstacle.contains(Vec2::new(end.x, end.z)));
     }
 }

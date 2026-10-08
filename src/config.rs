@@ -11,6 +11,17 @@ pub const PLAYER_RADIUS: f32 = 0.4;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 pub const VIEW_HEIGHT: f32 = 32.0;
 pub const DEFAULT_MOVE_SPEED: f32 = 14.0;
+/// (ground offset as a fraction of screen half-extents, box dimensions).
+/// Keep the central horizontal and vertical travel paths clear.
+pub const STARTING_BUILDINGS: [(Vec2, Vec3); 3] = [
+    (Vec2::new(-0.5, 0.35), Vec3::new(6.0, 5.0, 4.0)),
+    (Vec2::new(0.45, 0.3), Vec3::new(4.5, 4.5, 4.5)),
+    (Vec2::new(-0.4, -0.4), Vec3::new(7.0, 3.5, 4.0)),
+];
+pub const NEIGHBOR_BUILDINGS: [(Vec2, Vec3); 2] = [
+    (Vec2::new(-0.45, 0.3), Vec3::new(5.0, 4.0, 7.0)),
+    (Vec2::new(0.45, -0.35), Vec3::new(5.0, 5.0, 5.0)),
+];
 pub const WINDOW_WIDTH: u32 = 1280;
 pub const WINDOW_HEIGHT: u32 = 720;
 // Leave space for the capsule's full height and the edge overlays.
