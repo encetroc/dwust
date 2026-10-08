@@ -64,7 +64,10 @@ struct Session {
 }
 
 #[derive(Component)]
-struct CombatHud;
+struct CombatStats;
+
+#[derive(Component)]
+struct CombatSpells;
 
 #[derive(Component)]
 struct CombatTimeline;
@@ -91,7 +94,8 @@ impl Plugin for CombatPlugin {
                     combat_input,
                     advance_enemy_turn,
                     update_combat_visuals,
-                    update_combat_hud,
+                    update_combat_stats,
+                    update_combat_spells,
                     update_combat_timeline,
                     finish_if_won,
                 )
@@ -247,46 +251,33 @@ fn enter_combat(
         20,
         Color::srgb(0.9, 0.06, 0.04),
     ));
-    commands.spawn((
-        CombatObject,
-        DespawnOnExit(GameMode::Combat),
-        CombatHud,
-        Pickable::IGNORE,
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(19.0),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        BackgroundColor(Color::srgba(0.04, 0.05, 0.06, 0.9)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            left: px(12),
-            padding: UiRect::all(px(10)),
-            ..default()
-        },
-    ));
-    commands.spawn((
-        CombatObject,
-        DespawnOnExit(GameMode::Combat),
+    super::hud::spawn_hud_window(
+        &mut commands,
+        "HP / MP / AP",
+        CombatStats,
+        Vec2::new(16.0, 192.0),
+        Vec2::new(256.0, 64.0),
+        "",
+        16.0,
+    );
+    super::hud::spawn_hud_window(
+        &mut commands,
+        "Spells",
+        CombatSpells,
+        Vec2::new(272.0, 192.0),
+        Vec2::new(512.0, 96.0),
+        "",
+        16.0,
+    );
+    super::hud::spawn_hud_window(
+        &mut commands,
+        "Timeline",
         CombatTimeline,
-        Pickable::IGNORE,
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(20.0),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        BackgroundColor(Color::srgba(0.04, 0.05, 0.06, 0.9)),
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: px(12),
-            left: px(12),
-            padding: UiRect::all(px(10)),
-            ..default()
-        },
-    ));
+        Vec2::new(16.0, 288.0),
+        Vec2::new(768.0, 64.0),
+        "",
+        16.0,
+    );
 }
 
 fn spawn_unit(
@@ -359,7 +350,7 @@ fn combat_input(
     if keyboard.just_pressed(KeyCode::Escape) {
         session.spell_selected = false;
     }
-    if keyboard.just_pressed(KeyCode::Enter) && is_player_turn && !turn_order.entities.is_empty() {
+    if keyboard.just_pressed(KeyCode::Space) && is_player_turn && !turn_order.entities.is_empty() {
         turn_order.active = (turn_order.active + 1) % turn_order.entities.len();
         session.spell_selected = false;
         return;
@@ -561,37 +552,26 @@ fn update_combat_visuals(
     }
 }
 
-fn update_combat_hud(
+fn update_combat_stats(
     session: Res<Session>,
-    turn_order: Res<TurnOrder>,
-    mut hud: Single<&mut Text, With<CombatHud>>,
+    mut stats: Single<&mut Text, With<CombatStats>>,
     units: Query<&Unit>,
 ) {
-    let enemy_info = units
+    let hp = units
         .iter()
-        .filter(|unit| unit.team == Team::Enemy && unit.hp > 0)
-        .count();
-    let active_player = turn_order
-        .entities
-        .get(turn_order.active)
-        .is_some_and(|entity| {
-            units
-                .get(*entity)
-                .is_ok_and(|unit| unit.team == Team::Player)
-        });
-    let turn = if active_player {
-        "Your turn"
+        .find(|unit| unit.team == Team::Player)
+        .map_or(0, |player| player.hp.max(0));
+    stats.0 = format!("HP {hp}    MP {}    AP {}", session.mp, session.ap);
+}
+
+fn update_combat_spells(session: Res<Session>, mut spells: Single<&mut Text, With<CombatSpells>>) {
+    let selection = if session.spell_selected {
+        " [SELECTED]"
     } else {
-        "Enemy turn"
+        ""
     };
-    let action = if session.spell_selected {
-        "Spell selected: click a highlighted enemy"
-    } else {
-        "Click a tile to move; [1] select spell"
-    };
-    hud.0 = format!(
-        "{turn}  |  MP {}  |  AP {}  |  Enemies {}\n{action}  |  Spell: 10 damage, range 3, 3 AP  |  Esc: cancel spell  |  Enter: end turn",
-        session.mp, session.ap, enemy_info
+    spells.0 = format!(
+        "SPELLS\n[1] Fireball - {SPELL_DAMAGE} damage, {SPELL_AP} AP, range {SPELL_RANGE}{selection}"
     );
 }
 
@@ -620,13 +600,13 @@ fn update_combat_timeline(
                 }
             };
             if index == turn_order.active {
-                format!("[▶ {label}]")
+                format!("[* {label}]")
             } else {
                 format!("  {label}  ")
             }
         })
         .collect::<Vec<_>>();
-    timeline.0 = format!("TURN ORDER   {}", entries.join(" → "));
+    timeline.0 = format!("TURN ORDER   {}", entries.join(" > "));
 }
 
 fn finish_if_won(units: Query<&Unit, With<CombatObject>>, mut next: ResMut<NextState<GameMode>>) {

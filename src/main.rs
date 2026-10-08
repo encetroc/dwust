@@ -6,6 +6,7 @@ mod buildings;
 mod combat;
 mod config;
 mod headless;
+mod hud;
 use config::*;
 
 #[derive(Resource, Default)]
@@ -190,7 +191,7 @@ struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<combat::GameMode>()
-            .add_plugins(combat::CombatPlugin)
+            .add_plugins((combat::CombatPlugin, hud::HudPlugin))
             .init_resource::<MovementSettings>()
             .init_resource::<ScreenAnimationSettings>()
             .init_resource::<ScreenAnimation>()
@@ -607,6 +608,7 @@ fn set_destination(
     animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
     viewport: Res<GameViewport>,
+    hud: Res<hud::HudState>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut player: Single<&mut Player>,
 ) {
@@ -614,7 +616,12 @@ fn set_destination(
         pointer.overlay_pressed = false;
         return;
     }
-    if animation.0.is_some() || !mouse.just_pressed(MouseButton::Left) || pointer.hovered.is_some()
+    if animation.0.is_some()
+        || !mouse.just_pressed(MouseButton::Left)
+        || pointer.hovered.is_some()
+        || viewport
+            .cursor
+            .is_some_and(|cursor| hud.contains_cursor(cursor))
     {
         return;
     }
@@ -970,6 +977,7 @@ mod tests {
             .init_resource::<WorldScreen>()
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()
+            .init_resource::<hud::HudState>()
             .add_message::<OverlayInput>()
             .add_systems(
                 Update,
