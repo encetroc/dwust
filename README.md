@@ -6,10 +6,8 @@ A Dofus-inspired isometric world prototype built with Bevy.
 cargo run
 ```
 
-- Click the ground to move within the current screen. Player movement finds a route around building footprints and keeps a small clearance; clicking a building routes to its nearest reachable edge instead.
-- Click an edge arrow or press a keyboard arrow to walk to that edge, then enter the adjacent screen. On arrival, the screen switches instantly with no camera animation; the player appears at the opposite edge. Clicking the ground cancels pending travel.
-- Screens extend in all eight directions, including corner exits; the bottom-left badge shows the current screen coordinates.
-- Neutral, translucent edge strips keep all exits clickable, with directional arrows and a subtle hover highlight. Movement defaults to 14 units/second.
+- Roam continuously through the world: click the ground to walk to any visible point, or use WASD/arrow keys for direct movement. Mouse movement routes around building footprints; keyboard movement is direct.
+- The camera follows the player, and the ground recenters beneath it. There are no screen boundaries, edge exits, or screen transitions. Movement defaults to 14 units/second.
 - Combat spells are loaded from `assets/spells.json`. Select a spell with its number key, then click a valid target in range; `Escape` cancels selection. The configured AP cost is deducted on a successful cast, and AOE affects eligible units around the clicked target cell. Physical and magical damage bonuses are percentages; spell damage is `base_damage * (1 + damage_bonus / 100)` for the matching type.
 - Set the starting speed with `DWUST_MOVE_SPEED`, for example:
 
@@ -17,7 +15,7 @@ cargo run
 DWUST_MOVE_SPEED=24 cargo run
 ```
 
-Invalid speeds fall back to 14. All screens share the same neutral gray ground; there are no colored neighbor previews or screen-dependent color changes.
+Invalid speeds fall back to 14. The ground uses a neutral gray material.
 
 ### Adding spells
 
@@ -29,10 +27,10 @@ Example damage spell fields: `"base_damage": 10, "damage_type": "magical"`. Exam
 
 Game settings live in `src/config.rs`. Edit them and restart:
 
-- `GROUND_COLOR`, `SCREEN_EDGE_COLOR`, and `SCREEN_EDGE_HOVER_COLOR` define the neutral world/exit styling.
+- `GROUND_COLOR` defines the neutral world styling.
 - Movement speed, player dimensions, world size, view bounds, and window dimensions are in the same file.
 
-Screen transitions have no animation or input lockout.
+World movement is continuous; the camera follows the player without screen transitions.
 
 ## Checks
 
@@ -42,17 +40,10 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-Run the real game windowlessly with scripted movement, keyboard transitions,
-image-target UI clicks, and 12 checked screenshot checkpoints:
+The legacy headless journey script still tests the removed screen-navigation flow and should not be used to verify free-roam behavior. To capture the real combat UI with a windowless render target, run:
 
 ```sh
-cargo build
-RUN_DIR=$(mktemp -d)
-env -u DISPLAY -u WAYLAND_DISPLAY timeout 120s \
-  target/debug/dwust --verify-headless "$RUN_DIR/captures" > "$RUN_DIR/run.log" 2>&1
+env -u DISPLAY -u WAYLAND_DISPLAY cargo run --features headless-verification -- --verify-combat-ui /tmp/dwust-combat-ui
 ```
 
-The capture directory must not already exist. A graphics adapter (including
-software Vulkan/llvmpipe) is still required. Inspect the PNGs and `result.txt`;
-`run.log` records assertions and the adapter. This tests game input and UI picking,
-not OS input mapping or audio.
+The command saves `combat-ui.png` and `result.txt` in a fresh output directory.

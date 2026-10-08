@@ -1,18 +1,18 @@
 //! Central game settings. Edit these defaults and restart the game.
 use bevy::prelude::*;
 
-// Screen changes are immediate; all screens share a calm neutral ground.
 pub const GROUND_COLOR: Color = Color::srgb(0.32, 0.32, 0.32);
+#[cfg(test)]
 pub const SCREEN_EDGE_COLOR: Color = Color::srgba(0.08, 0.08, 0.08, 0.35);
+#[cfg(test)]
 pub const SCREEN_EDGE_HOVER_COLOR: Color = Color::srgba(0.08, 0.08, 0.08, 0.65);
 
-pub const WORLD_SIZE: f32 = 128.0;
+pub const WORLD_SIZE: f32 = 512.0;
 pub const PLAYER_RADIUS: f32 = 0.4;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 pub const VIEW_HEIGHT: f32 = 32.0;
 pub const DEFAULT_MOVE_SPEED: f32 = 14.0;
-/// (ground offset as a fraction of screen half-extents, box dimensions).
-/// Keep the central horizontal and vertical travel paths clear.
+/// Initial placeholder building layout: (ground offset, box dimensions).
 pub const STARTING_BUILDINGS: [(Vec2, Vec3); 3] = [
     (Vec2::new(-0.5, 0.35), Vec3::new(6.0, 5.0, 4.0)),
     (Vec2::new(0.45, 0.3), Vec3::new(4.5, 4.5, 4.5)),
@@ -24,7 +24,7 @@ pub const NEIGHBOR_BUILDINGS: [(Vec2, Vec3); 2] = [
 ];
 pub const WINDOW_WIDTH: u32 = 1280;
 pub const WINDOW_HEIGHT: u32 = 720;
-// Leave space for the capsule's full height and the edge overlays.
+#[cfg(test)]
 pub const SCREEN_MARGIN: Vec2 = Vec2::new(4.0, 10.0);
 pub const SCREEN_RIGHT: Vec3 = Vec3::new(
     std::f32::consts::FRAC_1_SQRT_2,

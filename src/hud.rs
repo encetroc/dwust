@@ -6,8 +6,6 @@ use std::collections::HashMap;
 pub(super) const SNAP: f32 = 16.0;
 const PANEL_WIDTH: f32 = 256.0;
 const PANEL_HEIGHT: f32 = 160.0;
-const HEADER_HEIGHT: f32 = 32.0;
-
 const HUD_LAYOUT_PATH: &str = "hud_layout.json";
 const STATS_KEY: &str = "Stats";
 
@@ -103,6 +101,18 @@ pub(super) struct HudWindow {
 #[derive(Component)]
 struct SnapGrid;
 
+fn snap_hud_size(size: Vec2) -> Vec2 {
+    (size.max(Vec2::splat(SNAP)) / SNAP).ceil() * SNAP
+}
+
+fn constrain_hud_position(position: Vec2, size: Vec2) -> Vec2 {
+    let max_position = Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) - size;
+    (position / SNAP)
+        .round()
+        .clamp(Vec2::ZERO, (max_position / SNAP).floor())
+        * SNAP
+}
+
 type StatsPanelFilter = (With<StatsPanel>, Without<SnapGrid>);
 
 pub(super) struct HudPlugin;
@@ -138,6 +148,8 @@ pub(super) fn spawn_hud_window<C: Component>(
     content: &str,
     font_size: f32,
 ) {
+    let size = snap_hud_size(size);
+    let position = constrain_hud_position(position, size);
     let entity = commands
         .spawn((
             DespawnOnExit(crate::combat::GameMode::Combat),
@@ -169,51 +181,29 @@ pub(super) fn spawn_hud_window<C: Component>(
     commands.entity(entity).with_children(|window| {
         window
             .spawn((
+                CloseHudWindow(entity),
+                Button,
                 Node {
-                    position_type: PositionType::Relative,
-                    height: px(HEADER_HEIGHT),
-                    min_height: px(HEADER_HEIGHT),
-                    padding: UiRect::axes(px(8), px(4)),
+                    position_type: PositionType::Absolute,
+                    right: px(2),
+                    top: px(2),
+                    width: px(16),
+                    height: px(16),
                     align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.10, 0.15, 0.22)),
+                BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
             ))
-            .with_children(|header| {
-                header.spawn((
-                    Text::new(title.to_owned()),
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("x"),
                     TextFont {
-                        font_size: FontSize::Px(12.0),
+                        font_size: FontSize::Px(11.0),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.75, 0.83, 0.92)),
+                    TextColor(Color::WHITE),
                 ));
-                header
-                    .spawn((
-                        CloseHudWindow(entity),
-                        Button,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            right: px(2),
-                            top: px(2),
-                            width: px(16),
-                            height: px(16),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
-                    ))
-                    .with_children(|button| {
-                        button.spawn((
-                            Text::new("x"),
-                            TextFont {
-                                font_size: FontSize::Px(11.0),
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
             });
         window.spawn((
             content_marker,
@@ -223,9 +213,12 @@ pub(super) fn spawn_hud_window<C: Component>(
                 ..default()
             },
             TextColor(Color::WHITE),
+            TextLayout::new(Justify::Left, LineBreak::WordBoundary),
             Node {
+                width: percent(100),
+                min_width: px(0),
                 flex_grow: 1.0,
-                padding: UiRect::all(px(8)),
+                padding: UiRect::new(px(8), px(28), px(8), px(8)),
                 align_items: AlignItems::Center,
                 ..default()
             },
@@ -245,7 +238,7 @@ fn load_hud_layout(mut state: ResMut<HudState>, mut layout: ResMut<HudLayout>) {
         Err(_) => {}
     }
     if let Some(position) = layout.position(STATS_KEY) {
-        state.position = position;
+        state.position = constrain_hud_position(position, Vec2::new(PANEL_WIDTH, PANEL_HEIGHT));
     }
     state.visible = layout.visible(STATS_KEY);
 }
@@ -271,50 +264,29 @@ fn setup_hud(mut commands: Commands, state: Res<HudState>) {
         .with_children(|panel| {
             panel
                 .spawn((
+                    CloseStats,
+                    Button,
                     Node {
-                        height: px(HEADER_HEIGHT),
-                        padding: UiRect::axes(px(8), px(4)),
+                        position_type: PositionType::Absolute,
+                        right: px(2),
+                        top: px(2),
+                        width: px(16),
+                        height: px(16),
                         align_items: AlignItems::Center,
-                        justify_content: JustifyContent::SpaceBetween,
+                        justify_content: JustifyContent::Center,
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.10, 0.15, 0.22)),
+                    BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
                 ))
-                .with_children(|header| {
-                    header.spawn((
-                        Text::new("Stats"),
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("x"),
                         TextFont {
-                            font_size: FontSize::Px(12.0),
+                            font_size: FontSize::Px(11.0),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.75, 0.83, 0.92)),
+                        TextColor(Color::WHITE),
                     ));
-                    header
-                        .spawn((
-                            CloseStats,
-                            Button,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: px(2),
-                                top: px(2),
-                                width: px(16),
-                                height: px(16),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
-                        ))
-                        .with_children(|button| {
-                            button.spawn((
-                                Text::new("x"),
-                                TextFont {
-                                    font_size: FontSize::Px(11.0),
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                            ));
-                        });
                 });
             panel
                 .spawn(Node {
@@ -324,7 +296,8 @@ fn setup_hud(mut commands: Commands, state: Res<HudState>) {
                     ..default()
                 })
                 .with_children(|body| {
-                    stat_row(body, "HP", "100 / 100", Color::srgb(0.36, 0.84, 0.48));
+                    stat_row(body, "Current HP", "100", Color::srgb(0.36, 0.84, 0.48));
+                    stat_row(body, "Total HP", "100", Color::srgb(0.36, 0.84, 0.48));
                     stat_row(body, "PD", "12", Color::srgb(0.95, 0.68, 0.30));
                     stat_row(body, "MD", "8", Color::srgb(0.43, 0.68, 0.98));
                 });
@@ -435,7 +408,7 @@ fn interact_with_hud(
 
     if mouse.just_pressed(MouseButton::Left) && state.visible {
         let local = cursor - state.position;
-        if local.x >= 0.0 && local.x <= PANEL_WIDTH && local.y >= 0.0 && local.y <= HEADER_HEIGHT {
+        if local.x >= 0.0 && local.x <= PANEL_WIDTH && local.y >= 0.0 && local.y <= PANEL_HEIGHT {
             state.dragging = true;
             state.drag_offset = local;
         }
@@ -444,7 +417,10 @@ fn interact_with_hud(
         state.dragging = false;
     }
     if state.dragging && mouse.pressed(MouseButton::Left) {
-        state.position = ((cursor - state.drag_offset) / SNAP).round() * SNAP;
+        state.position = constrain_hud_position(
+            cursor - state.drag_offset,
+            Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
+        );
     }
 }
 
@@ -476,16 +452,18 @@ fn interact_with_hud_windows(
             if local.x >= 0.0
                 && local.x <= hud_window.size.x
                 && local.y >= 0.0
-                && local.y <= HEADER_HEIGHT
+                && local.y <= hud_window.size.y
+                && !(local.x >= hud_window.size.x - 20.0 && local.y <= 20.0)
             {
                 hud_window.dragging = true;
                 hud_window.drag_offset = local;
             }
         }
         if hud_window.dragging && mouse.pressed(MouseButton::Left) {
-            hud_window.position = ((cursor - hud_window.drag_offset) / SNAP).round() * SNAP;
-            node.left = px(hud_window.position.x.max(0.0));
-            node.top = px(hud_window.position.y.max(0.0));
+            hud_window.position =
+                constrain_hud_position(cursor - hud_window.drag_offset, hud_window.size);
+            node.left = px(hud_window.position.x);
+            node.top = px(hud_window.position.y);
         }
     }
 }
@@ -516,9 +494,9 @@ fn restore_hud_window_positions(
             Visibility::Hidden
         });
         if let Some(position) = layout.position(&window.key) {
-            window.position = position;
-            node.left = px(position.x.max(0.0));
-            node.top = px(position.y.max(0.0));
+            window.position = constrain_hud_position(position, window.size);
+            node.left = px(window.position.x);
+            node.top = px(window.position.y);
         }
     }
 }
@@ -563,8 +541,8 @@ fn sync_hud(
             Visibility::Hidden
         },
     );
-    node.left = px(state.position.x.max(0.0));
-    node.top = px(state.position.y.max(0.0));
+    node.left = px(state.position.x);
+    node.top = px(state.position.y);
     grid.display = if state.dragging || windows.iter().any(|window| window.dragging) {
         Display::Grid
     } else {
@@ -575,6 +553,19 @@ fn sync_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_modules_keep_every_edge_on_the_grid_and_inside_the_viewport() {
+        let size = snap_hud_size(Vec2::new(320.0, 44.0));
+        let position = constrain_hud_position(Vec2::new(f32::MAX, f32::MAX), size);
+
+        assert_eq!(size, Vec2::new(320.0, 48.0));
+        assert_eq!(position % SNAP, Vec2::ZERO);
+        assert_eq!(
+            position + size,
+            Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)
+        );
+    }
 
     #[test]
     fn hud_layout_round_trips_named_positions() {

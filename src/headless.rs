@@ -9,7 +9,10 @@ use bevy::{
         PickingSystems,
         pointer::{Location, PointerAction, PointerId, PointerInput},
     },
-    render::view::screenshot::{Screenshot, ScreenshotCaptured},
+    render::{
+        render_resource::TextureFormat,
+        view::screenshot::{Screenshot, ScreenshotCaptured},
+    },
     time::TimeUpdateStrategy,
     window::ExitCondition,
     winit::WinitPlugin,

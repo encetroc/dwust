@@ -1,14 +1,16 @@
-use bevy::{
-    camera::ScalingMode, prelude::*, render::render_resource::TextureFormat, window::PrimaryWindow,
-};
+use bevy::{camera::ScalingMode, prelude::*, window::PrimaryWindow};
 
 mod buildings;
 mod combat;
+#[cfg(feature = "headless-verification")]
+mod combat_ui_capture;
 mod config;
+#[cfg(test)]
 mod headless;
 mod hud;
 use config::*;
 
+#[cfg(test)]
 #[derive(Resource, Default)]
 struct WorldScreen {
     coordinates: IVec2,
@@ -18,9 +20,11 @@ struct WorldScreen {
 #[derive(Component)]
 struct Ground;
 
+#[cfg(test)]
 #[derive(Component)]
 struct StatusText;
 
+#[cfg(test)]
 #[derive(Component, Clone, Copy)]
 enum ScreenDirection {
     Up,
@@ -33,6 +37,7 @@ enum ScreenDirection {
     DownRight,
 }
 
+#[cfg(test)]
 impl ScreenDirection {
     fn arrow_rotation(self) -> Rot2 {
         let offset = self.grid_offset();
@@ -53,11 +58,13 @@ impl ScreenDirection {
     }
 }
 
+#[cfg(test)]
 #[derive(Component, Clone, Copy)]
 enum OverlayAction {
     Travel(ScreenDirection),
 }
 
+#[cfg(test)]
 #[derive(Message)]
 struct OverlayInput(OverlayAction);
 
@@ -98,6 +105,7 @@ fn screen_half_extents(size: Vec2) -> Vec2 {
     Vec2::new(VIEW_HEIGHT * size.x / size.y.max(1.0) / 2.0, VIEW_HEIGHT)
 }
 
+#[cfg(test)]
 fn clamp_to_screen(position: Vec3, center: Vec3, half_extents: Vec2) -> Vec3 {
     let local = position - center;
     let bounds = (half_extents - SCREEN_MARGIN).max(Vec2::ZERO);
@@ -107,6 +115,7 @@ fn clamp_to_screen(position: Vec3, center: Vec3, half_extents: Vec2) -> Vec3 {
         + Vec3::Y * (PLAYER_HEIGHT / 2.0)
 }
 
+#[cfg(test)]
 fn screen_transition(
     position: Vec3,
     center: Vec3,
@@ -145,10 +154,12 @@ fn screen_transition(
 struct Player {
     destination: Option<Vec3>,
     path: Vec<Vec3>,
+    #[cfg(test)]
     travel: Option<ScreenDirection>,
     approach_enemy: Option<Entity>,
 }
 
+#[cfg(test)]
 fn travel_destination(
     position: Vec3,
     center: Vec3,
@@ -176,21 +187,13 @@ impl Plugin for GamePlugin {
         app.init_state::<combat::GameMode>()
             .add_plugins((combat::CombatPlugin, hud::HudPlugin))
             .init_resource::<MovementSettings>()
-            .init_resource::<WorldScreen>()
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()
-            .add_message::<OverlayInput>()
-            .add_systems(Startup, (setup, setup_overlay, buildings::spawn_buildings))
+            .add_systems(Startup, (setup, buildings::spawn_buildings))
             .add_systems(PreUpdate, sync_viewport)
             .add_systems(
                 Update,
-                (
-                    handle_overlay_and_travel,
-                    set_destination,
-                    move_player,
-                    finish_travel,
-                    update_status,
-                )
+                (set_destination, move_player, free_roam_input, follow_player)
                     .chain()
                     .run_if(in_state(combat::GameMode::World)),
             );
@@ -198,10 +201,13 @@ impl Plugin for GamePlugin {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("--verify-headless") {
-        headless::run(args.next().expect("provide a fresh output directory"));
-        return;
+    #[cfg(feature = "headless-verification")]
+    {
+        let mut args = std::env::args().skip(1);
+        if args.next().as_deref() == Some("--verify-combat-ui") {
+            combat_ui_capture::run(args.next().expect("provide a fresh output directory"));
+            return;
+        }
     }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -270,6 +276,7 @@ fn setup(
     ));
 }
 
+#[cfg(test)]
 fn setup_overlay(mut commands: Commands) {
     commands.spawn((
         StatusText,
@@ -409,6 +416,7 @@ fn setup_overlay(mut commands: Commands) {
     }
 }
 
+#[cfg(test)]
 fn overlay_over(
     event: On<Pointer<Over>>,
     mut pointer: ResMut<OverlayPointer>,
@@ -420,6 +428,7 @@ fn overlay_over(
     }
 }
 
+#[cfg(test)]
 fn overlay_out(
     event: On<Pointer<Out>>,
     mut pointer: ResMut<OverlayPointer>,
@@ -433,6 +442,7 @@ fn overlay_out(
     }
 }
 
+#[cfg(test)]
 fn overlay_press(
     mut event: On<Pointer<Press>>,
     actions: Query<&OverlayAction>,
@@ -450,6 +460,7 @@ fn overlay_press(
 
 // Explicit disjoint queries keep Bevy's mutable transform access safe.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[cfg(test)]
 fn handle_overlay_and_travel(
     keyboard: Res<ButtonInput<KeyCode>>,
     viewport: Res<GameViewport>,
@@ -489,6 +500,7 @@ fn handle_overlay_and_travel(
 
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn finish_travel(
     viewport: Res<GameViewport>,
     mut screen: ResMut<WorldScreen>,
@@ -517,6 +529,7 @@ fn finish_travel(
     }
 }
 
+#[cfg(test)]
 fn update_status(screen: Res<WorldScreen>, mut text: Single<&mut Text, With<StatusText>>) {
     if screen.is_changed() {
         text.0 = format!("[{}, {}]", screen.coordinates.x, screen.coordinates.y);
@@ -528,7 +541,6 @@ fn set_destination(
     mouse: Res<ButtonInput<MouseButton>>,
     mut pointer: ResMut<OverlayPointer>,
     enemies: Query<(Entity, &GlobalTransform), With<combat::WorldEnemy>>,
-    screen: Res<WorldScreen>,
     viewport: Res<GameViewport>,
     hud: Res<hud::HudState>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
@@ -551,26 +563,61 @@ fn set_destination(
         && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor)
     {
         if let Some((enemy, position)) = combat::ray_hits_enemy(ray, &enemies) {
-            player.travel = None;
             player.approach_enemy = Some(enemy);
             player.path.clear();
             player.destination = Some(Vec3::new(position.x, PLAYER_HEIGHT / 2.0, position.z));
         } else if let Some(point) =
             ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
         {
-            player.travel = None;
             player.approach_enemy = None;
             player.path.clear();
-            player.destination = Some(clamp_to_screen(
-                point,
-                screen.center,
-                screen_half_extents(viewport.size),
-            ));
+            player.destination = Some(Vec3::new(point.x, PLAYER_HEIGHT / 2.0, point.z));
         }
     }
 }
 
 #[allow(clippy::type_complexity)]
+fn free_roam_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    settings: Res<MovementSettings>,
+    mut player: Single<(&mut Transform, &mut Player)>,
+) {
+    let mut direction = Vec3::ZERO;
+    if keyboard.pressed(KeyCode::ArrowUp) || keyboard.pressed(KeyCode::KeyW) {
+        direction += SCREEN_UP;
+    }
+    if keyboard.pressed(KeyCode::ArrowDown) || keyboard.pressed(KeyCode::KeyS) {
+        direction -= SCREEN_UP;
+    }
+    if keyboard.pressed(KeyCode::ArrowRight) || keyboard.pressed(KeyCode::KeyD) {
+        direction += SCREEN_RIGHT;
+    }
+    if keyboard.pressed(KeyCode::ArrowLeft) || keyboard.pressed(KeyCode::KeyA) {
+        direction -= SCREEN_RIGHT;
+    }
+    if direction == Vec3::ZERO {
+        return;
+    }
+    let (transform, player) = &mut *player;
+    transform.translation += direction.normalize() * settings.speed * time.delta_secs();
+    player.destination = None;
+    player.path.clear();
+    player.approach_enemy = None;
+}
+
+fn follow_player(
+    player: Single<&Transform, (With<Player>, Without<Camera3d>, Without<Ground>)>,
+    mut camera: Single<&mut Transform, (With<Camera3d>, Without<Player>, Without<Ground>)>,
+    mut ground: Single<&mut Transform, (With<Ground>, Without<Player>, Without<Camera3d>)>,
+) {
+    let player = player.translation;
+    let focus = Vec3::new(player.x, 0.0, player.z);
+    camera.translation = focus + Vec3::new(40.0, 40.0 * (2.0_f32 / 3.0).sqrt(), 40.0);
+    camera.look_at(focus, Vec3::Y);
+    ground.translation = focus;
+}
+
 fn move_player(
     time: Res<Time>,
     settings: Res<MovementSettings>,
@@ -597,7 +644,6 @@ fn move_player(
     }
     let Some(waypoint) = player.path.first().copied() else {
         player.destination = None;
-        player.travel = None;
         return;
     };
     transform.translation = step_toward(

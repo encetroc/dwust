@@ -233,7 +233,6 @@ fn start_combat(
     if player_position.distance_squared(enemy_position) <= contact_distance * contact_distance {
         player_state.destination = None;
         player_state.path.clear();
-        player_state.travel = None;
         player_state.approach_enemy = None;
         session.world_enemy = Some(enemy);
         next.set(GameMode::Combat);
@@ -331,7 +330,7 @@ fn enter_combat(
         KeyCode::KeyS,
         CombatStats,
         Vec2::new(16.0, 192.0),
-        Vec2::new(256.0, 80.0),
+        Vec2::new(320.0, 44.0),
         "",
         16.0,
     );
@@ -340,8 +339,8 @@ fn enter_combat(
         "Spells",
         KeyCode::KeyP,
         CombatSpells,
-        Vec2::new(272.0, 192.0),
-        Vec2::new(512.0, 208.0),
+        Vec2::new(352.0, 192.0),
+        Vec2::new(512.0, 112.0),
         "",
         16.0,
     );
@@ -351,7 +350,7 @@ fn enter_combat(
         KeyCode::KeyT,
         CombatTimeline,
         Vec2::new(16.0, 416.0),
-        Vec2::new(768.0, 64.0),
+        Vec2::new(160.0, 80.0),
         "",
         16.0,
     );
@@ -781,10 +780,11 @@ fn update_combat_visuals(
 
 fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Query<&Unit>) {
     let player = units.iter().find(|unit| unit.team == Team::Player);
-    let hp = player.map_or(0, |unit| unit.hp.max(0));
+    let current_hp = player.map_or(0, |unit| unit.hp.max(0));
+    let total_hp = player.map_or(0, |unit| unit.max_hp);
     let mp = player.map_or(0, |unit| unit.mp);
     let ap = player.map_or(0, |unit| unit.ap);
-    stats.0 = format!("HP {hp}    MP {mp}    AP {ap}");
+    stats.0 = format!("HP {current_hp}/{total_hp}    MP {mp}    AP {ap}");
 }
 
 fn update_combat_spells(
@@ -798,13 +798,13 @@ fn update_combat_spells(
         .enumerate()
         .map(|(index, spell)| {
             let selected = if session.spell_selected == Some(index) {
-                " [SELECTED]"
+                "* "
             } else {
                 ""
             };
             let damage = if spell.base_damage > 0 {
                 format!(
-                    " — {} AP, {} {} ({})",
+                    " - {} AP, {} {} ({})",
                     spell.ap_cost,
                     spell.base_damage,
                     match spell.damage_type {
@@ -814,9 +814,9 @@ fn update_combat_spells(
                     spell.range
                 )
             } else {
-                format!(" — {} AP, range {}", spell.ap_cost, spell.range)
+                format!(" - {} AP, range {}", spell.ap_cost, spell.range)
             };
-            format!("[{}] {}{}{}", index + 1, spell.name, damage, selected)
+            format!("{}[{}] {}{}", selected, index + 1, spell.name, damage)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -853,7 +853,7 @@ fn update_combat_timeline(
             }
         })
         .collect::<Vec<_>>();
-    timeline.0 = format!("TURN ORDER   {}", entries.join(" > "));
+    timeline.0 = entries.join("\n");
 }
 
 fn finish_if_won(units: Query<&Unit, With<CombatObject>>, mut next: ResMut<NextState<GameMode>>) {

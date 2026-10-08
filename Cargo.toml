@@ -3,6 +3,9 @@ name = "dwust"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+headless-verification = []
+
 [dependencies]
 bevy = "0.19.1"
 serde = { version = "1", features = ["derive"] }
