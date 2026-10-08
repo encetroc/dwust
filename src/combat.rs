@@ -1,11 +1,9 @@
 use super::*;
+use serde::Deserialize;
 
 const GRID_W: i32 = 8;
 const GRID_H: i32 = 6;
 const TILE: f32 = 2.0;
-const SPELL_RANGE: i32 = 3;
-const SPELL_AP: u8 = 3;
-const SPELL_DAMAGE: i32 = 10;
 
 #[derive(States, Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum GameMode {
@@ -37,7 +35,51 @@ struct Unit {
     team: Team,
     cell: IVec2,
     hp: i32,
+    max_hp: i32,
+    mp: i32,
+    ap: i32,
+    damage: i32,
+    armor: i32,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SpellStat {
+    Hp,
+    MaxHp,
+    Mp,
+    Ap,
+    Damage,
+    Armor,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SpellTarget {
+    Enemy,
+    Ally,
+    Any,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SpellEffect {
+    stat: SpellStat,
+    amount: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct Spell {
+    name: String,
+    ap_cost: i32,
+    range: i32,
+    /// Row-major footprint centered on the targeted cell; true cells are affected.
+    area: Vec<Vec<bool>>,
+    target: SpellTarget,
+    effects: Vec<SpellEffect>,
+}
+
+#[derive(Resource, Default)]
+struct SpellBook(Vec<Spell>);
 
 #[derive(Component)]
 struct CombatTile {
@@ -56,9 +98,7 @@ struct EnemyTurnDelay(Timer);
 
 #[derive(Resource, Default)]
 struct Session {
-    mp: u8,
-    ap: u8,
-    spell_selected: bool,
+    spell_selected: Option<usize>,
     camera_transform: Option<Transform>,
     world_enemy: Option<Entity>,
 }
@@ -77,6 +117,8 @@ pub(super) struct CombatPlugin;
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
+            .init_resource::<SpellBook>()
+            .add_systems(Startup, load_spells)
             .init_resource::<TurnOrder>()
             .insert_resource(EnemyTurnDelay(Timer::from_seconds(0.65, TimerMode::Once)))
             .add_systems(Startup, spawn_world_enemies)
@@ -103,6 +145,24 @@ impl Plugin for CombatPlugin {
                     .run_if(in_state(GameMode::Combat)),
             );
     }
+}
+
+fn load_spells(mut book: ResMut<SpellBook>) {
+    let contents =
+        std::fs::read_to_string("assets/spells.json").expect("failed to read assets/spells.json");
+    let spells: Vec<Spell> = serde_json::from_str(&contents)
+        .expect("assets/spells.json must contain a valid spell list");
+    assert!(
+        !spells.is_empty(),
+        "assets/spells.json must define at least one spell"
+    );
+    assert!(
+        spells
+            .iter()
+            .all(|spell| { spell.ap_cost >= 0 && spell.range >= 0 && valid_area(&spell.area) }),
+        "spell AP cost and range must be non-negative; area must be a non-empty odd-sized matrix with a true center"
+    );
+    book.0 = spells;
 }
 
 fn spawn_world_enemies(
@@ -191,9 +251,7 @@ fn enter_combat(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    session.mp = 3;
-    session.ap = 6;
-    session.spell_selected = false;
+    session.spell_selected = None;
     session.camera_transform = Some(**camera);
     for mut visibility in &mut world {
         *visibility = Visibility::Hidden;
@@ -265,7 +323,7 @@ fn enter_combat(
         "Spells",
         CombatSpells,
         Vec2::new(272.0, 192.0),
-        Vec2::new(512.0, 96.0),
+        Vec2::new(512.0, 208.0),
         "",
         16.0,
     );
@@ -273,7 +331,7 @@ fn enter_combat(
         &mut commands,
         "Timeline",
         CombatTimeline,
-        Vec2::new(16.0, 288.0),
+        Vec2::new(16.0, 416.0),
         Vec2::new(768.0, 64.0),
         "",
         16.0,
@@ -293,7 +351,16 @@ fn spawn_unit(
         .spawn((
             CombatObject,
             DespawnOnExit(GameMode::Combat),
-            Unit { team, cell, hp },
+            Unit {
+                team,
+                cell,
+                hp,
+                max_hp: hp,
+                mp: if team == Team::Player { 3 } else { 0 },
+                ap: if team == Team::Player { 6 } else { 0 },
+                damage: 10,
+                armor: 0,
+            },
             Mesh3d(meshes.add(Sphere::new(0.72).mesh().uv(24, 16))),
             MeshMaterial3d(materials.add(color)),
             Transform::from_translation(cell_to_world(cell) + Vec3::Y * 0.85),
@@ -338,6 +405,7 @@ fn combat_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     viewport: Res<GameViewport>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
+    book: Res<SpellBook>,
     mut session: ResMut<Session>,
     mut turn_order: ResMut<TurnOrder>,
     mut next: ResMut<NextState<GameMode>>,
@@ -348,18 +416,32 @@ fn combat_input(
         .get(turn_order.active)
         .is_some_and(|active| turn_order.entities.first() == Some(active));
     if keyboard.just_pressed(KeyCode::Escape) {
-        session.spell_selected = false;
+        session.spell_selected = None;
     }
     if keyboard.just_pressed(KeyCode::Space) && is_player_turn && !turn_order.entities.is_empty() {
         turn_order.active = (turn_order.active + 1) % turn_order.entities.len();
-        session.spell_selected = false;
+        session.spell_selected = None;
         return;
     }
     if !is_player_turn {
         return;
     }
-    if keyboard.just_pressed(KeyCode::Digit1) {
-        session.spell_selected = true;
+    let spell_keys = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    if let Some(index) = spell_keys
+        .iter()
+        .position(|key| keyboard.just_pressed(*key))
+    {
+        session.spell_selected = (index < book.0.len()).then_some(index);
     }
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -380,54 +462,124 @@ fn combat_input(
         return;
     }
 
-    let player_cell = units
-        .iter()
-        .find_map(|(_, unit, _)| (unit.team == Team::Player).then_some(unit.cell));
-    let Some(player_cell) = player_cell else {
+    let Some((player_entity, player_cell, player_ap, player_mp)) =
+        units.iter().find_map(|(entity, unit, _)| {
+            (unit.team == Team::Player).then_some((entity, unit.cell, unit.ap, unit.mp))
+        })
+    else {
         return;
     };
     let distance = (cell.x - player_cell.x).abs() + (cell.y - player_cell.y).abs();
-    let target = units
-        .iter()
-        .position(|(_, unit, _)| unit.team == Team::Enemy && unit.hp > 0 && unit.cell == cell);
-    if session.spell_selected {
-        if let Some(target) = target
-            && distance <= SPELL_RANGE
-            && session.ap >= SPELL_AP
-        {
-            session.ap -= SPELL_AP;
-            session.spell_selected = false;
-            if let Some((_, mut unit, mut transform)) = units.iter_mut().nth(target) {
-                unit.hp -= SPELL_DAMAGE;
-                if unit.hp <= 0 {
-                    transform.scale = Vec3::splat(0.001);
-                }
-            }
-            if units
-                .iter()
-                .all(|(_, unit, _)| unit.team != Team::Enemy || unit.hp <= 0)
+    if let Some(index) = session.spell_selected {
+        let Some(spell) = book.0.get(index) else {
+            session.spell_selected = None;
+            return;
+        };
+        if distance > spell.range || player_ap < spell.ap_cost {
+            return;
+        }
+        let spell = spell.clone();
+        if let Ok((_, mut player, _)) = units.get_mut(player_entity) {
+            player.ap -= spell.ap_cost;
+        }
+        for (_, mut unit, mut transform) in &mut units {
+            let offset = unit.cell - cell;
+            if unit.hp <= 0
+                || !area_contains(&spell.area, offset)
+                || !target_matches(spell.target, unit.team)
             {
-                next.set(GameMode::World);
+                continue;
             }
+            for effect in &spell.effects {
+                apply_effect(&mut unit, effect);
+            }
+            if unit.hp <= 0 {
+                transform.scale = Vec3::splat(0.001);
+            }
+        }
+        session.spell_selected = None;
+        if units
+            .iter()
+            .all(|(_, unit, _)| unit.team != Team::Enemy || unit.hp <= 0)
+        {
+            next.set(GameMode::World);
         }
         return;
     }
-    if target.is_some() || distance == 0 || distance > session.mp as i32 {
+    if distance == 0 || distance > player_mp {
         return;
     }
     if units
         .iter()
-        .any(|(_, unit, _)| unit.team == Team::Enemy && unit.cell == cell && unit.hp > 0)
+        .any(|(_, unit, _)| unit.hp > 0 && unit.cell == cell)
     {
         return;
     }
-    session.mp -= distance as u8;
-    if let Some((_, mut unit, mut transform)) = units
-        .iter_mut()
-        .find(|(_, unit, _)| unit.team == Team::Player)
-    {
-        unit.cell = cell;
+    if let Ok((_, mut player, mut transform)) = units.get_mut(player_entity) {
+        player.mp -= distance;
+        player.cell = cell;
         transform.translation = cell_to_world(cell) + Vec3::Y * 0.85;
+    }
+}
+
+fn valid_area(area: &[Vec<bool>]) -> bool {
+    let Some(width) = area.first().map(Vec::len) else {
+        return false;
+    };
+    width > 0
+        && area.len() % 2 == 1
+        && width % 2 == 1
+        && area.iter().all(|row| row.len() == width)
+        && area[area.len() / 2][width / 2]
+}
+
+fn area_contains(area: &[Vec<bool>], offset: IVec2) -> bool {
+    let Some(width) = area.first().map(Vec::len) else {
+        return false;
+    };
+    let col = offset.x + (width / 2) as i32;
+    let row = offset.y + (area.len() / 2) as i32;
+    row >= 0
+        && row < area.len() as i32
+        && col >= 0
+        && col < width as i32
+        && area[row as usize][col as usize]
+}
+
+fn area_cells(area: &[Vec<bool>], center: IVec2) -> Vec<IVec2> {
+    let row_center = (area.len() / 2) as i32;
+    let col_center = area.first().map_or(0, |row| (row.len() / 2) as i32);
+    area.iter()
+        .enumerate()
+        .flat_map(|(row, cells)| {
+            cells.iter().enumerate().filter_map(move |(col, affected)| {
+                affected.then_some(
+                    center + IVec2::new(col as i32 - col_center, row as i32 - row_center),
+                )
+            })
+        })
+        .collect()
+}
+
+fn target_matches(target: SpellTarget, team: Team) -> bool {
+    match target {
+        SpellTarget::Enemy => team == Team::Enemy,
+        SpellTarget::Ally => team == Team::Player,
+        SpellTarget::Any => true,
+    }
+}
+
+fn apply_effect(unit: &mut Unit, effect: &SpellEffect) {
+    match effect.stat {
+        SpellStat::Hp => unit.hp = (unit.hp + effect.amount).clamp(0, unit.max_hp),
+        SpellStat::MaxHp => {
+            unit.max_hp = (unit.max_hp + effect.amount).max(1);
+            unit.hp = unit.hp.min(unit.max_hp);
+        }
+        SpellStat::Mp => unit.mp = (unit.mp + effect.amount).max(0),
+        SpellStat::Ap => unit.ap = (unit.ap + effect.amount).max(0),
+        SpellStat::Damage => unit.damage = (unit.damage + effect.amount).max(0),
+        SpellStat::Armor => unit.armor = (unit.armor + effect.amount).max(0),
     }
 }
 
@@ -436,7 +588,7 @@ fn advance_enemy_turn(
     mut delay: ResMut<EnemyTurnDelay>,
     mut turn_order: ResMut<TurnOrder>,
     mut session: ResMut<Session>,
-    units: Query<&Unit>,
+    mut units: Query<&mut Unit>,
 ) {
     let Some(&active) = turn_order.entities.get(turn_order.active) else {
         return;
@@ -452,15 +604,19 @@ fn advance_enemy_turn(
     }
     turn_order.active = (turn_order.active + 1) % turn_order.entities.len();
     delay.0.reset();
-    if turn_order.active == 0 {
-        session.mp = 3;
-        session.ap = 6;
+    if turn_order.active == 0
+        && let Some(&player) = turn_order.entities.first()
+        && let Ok(mut unit) = units.get_mut(player)
+    {
+        unit.mp = 3;
+        unit.ap = 6;
     }
-    session.spell_selected = false;
+    session.spell_selected = None;
 }
 
 fn update_combat_visuals(
     session: Res<Session>,
+    book: Res<SpellBook>,
     turn_order: Res<TurnOrder>,
     viewport: Res<GameViewport>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
@@ -469,9 +625,11 @@ fn update_combat_visuals(
     mut appearances: Query<(&Unit, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let player_cell = units
+    let player_data = units
         .iter()
-        .find_map(|unit| (unit.team == Team::Player).then_some(unit.cell));
+        .find(|unit| unit.team == Team::Player)
+        .map(|unit| (unit.cell, unit.mp, unit.ap));
+    let player_cell = player_data.map(|(cell, _, _)| cell);
     let mut hovered_cell = None;
     if let Some(cursor) = viewport.cursor {
         let (camera, transform) = *camera;
@@ -494,16 +652,25 @@ fn update_combat_visuals(
             // The player is the first entity in the turn order.
             turn_order.entities.first() == Some(active)
         });
+    let selected_spell = session.spell_selected.and_then(|index| book.0.get(index));
+    let preview_area = selected_spell.and_then(|spell| {
+        let (origin, center) = (player_cell?, hovered_cell?);
+        let distance = (center.x - origin.x).abs() + (center.y - origin.y).abs();
+        let enough_ap = player_data.is_some_and(|(_, _, ap)| ap >= spell.ap_cost);
+        (player_turn && distance <= spell.range && enough_ap)
+            .then(|| area_cells(&spell.area, center))
+    });
     let mut path = Vec::new();
     if player_turn
-        && !session.spell_selected
+        && session.spell_selected.is_none()
         && let (Some(start), Some(end)) = (player_cell, hovered_cell)
     {
         let distance = (end.x - start.x).abs() + (end.y - start.y).abs();
         let occupied = units
             .iter()
             .any(|unit| unit.team == Team::Enemy && unit.hp > 0 && unit.cell == end);
-        if distance > 0 && distance <= session.mp as i32 && !occupied {
+        let player_mp = player_data.map_or(0, |(_, mp, _)| mp);
+        if distance > 0 && distance <= player_mp && !occupied {
             let mut cell = start;
             while cell.x != end.x {
                 cell.x += (end.x - cell.x).signum();
@@ -516,7 +683,14 @@ fn update_combat_visuals(
         }
     }
     for (unit, material_handle) in &mut appearances {
-        let color = if unit.hp > 0 && hovered_unit == Some(unit.cell) {
+        let affected = unit.hp > 0
+            && preview_area
+                .as_ref()
+                .is_some_and(|cells| cells.contains(&unit.cell))
+            && selected_spell.is_some_and(|spell| target_matches(spell.target, unit.team));
+        let color = if affected {
+            Color::srgb(1.0, 0.45, 0.12)
+        } else if unit.hp > 0 && hovered_unit == Some(unit.cell) {
             Color::srgb(1.0, 0.78, 0.12)
         } else if unit.team == Team::Player {
             Color::srgb(0.15, 0.38, 0.95)
@@ -530,12 +704,22 @@ fn update_combat_visuals(
         }
     }
     for (tile, material_handle) in &mut tiles {
-        let color = if hovered_unit == Some(tile.cell) {
+        let color = if preview_area
+            .as_ref()
+            .is_some_and(|cells| cells.contains(&tile.cell))
+        {
+            Color::srgb(0.95, 0.35, 0.18)
+        } else if hovered_unit == Some(tile.cell) {
             Color::srgb(1.0, 0.78, 0.12)
         } else if player_turn
-            && session.spell_selected
-            && player_cell.is_some_and(|origin| {
-                (tile.cell.x - origin.x).abs() + (tile.cell.y - origin.y).abs() <= SPELL_RANGE
+            && session.spell_selected.is_some_and(|index| {
+                book.0.get(index).is_some_and(|spell| {
+                    player_data.is_some_and(|(origin, _, ap)| {
+                        ap >= spell.ap_cost
+                            && (tile.cell.x - origin.x).abs() + (tile.cell.y - origin.y).abs()
+                                <= spell.range
+                    })
+                })
             })
         {
             Color::srgb(0.20, 0.55, 0.85)
@@ -552,27 +736,33 @@ fn update_combat_visuals(
     }
 }
 
-fn update_combat_stats(
-    session: Res<Session>,
-    mut stats: Single<&mut Text, With<CombatStats>>,
-    units: Query<&Unit>,
-) {
-    let hp = units
-        .iter()
-        .find(|unit| unit.team == Team::Player)
-        .map_or(0, |player| player.hp.max(0));
-    stats.0 = format!("HP {hp}    MP {}    AP {}", session.mp, session.ap);
+fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Query<&Unit>) {
+    let player = units.iter().find(|unit| unit.team == Team::Player);
+    let hp = player.map_or(0, |unit| unit.hp.max(0));
+    let mp = player.map_or(0, |unit| unit.mp);
+    let ap = player.map_or(0, |unit| unit.ap);
+    stats.0 = format!("HP {hp}    MP {mp}    AP {ap}");
 }
 
-fn update_combat_spells(session: Res<Session>, mut spells: Single<&mut Text, With<CombatSpells>>) {
-    let selection = if session.spell_selected {
-        " [SELECTED]"
-    } else {
-        ""
-    };
-    spells.0 = format!(
-        "SPELLS\n[1] Fireball - {SPELL_DAMAGE} damage, {SPELL_AP} AP, range {SPELL_RANGE}{selection}"
-    );
+fn update_combat_spells(
+    session: Res<Session>,
+    book: Res<SpellBook>,
+    mut text: Single<&mut Text, With<CombatSpells>>,
+) {
+    text.0 = book
+        .0
+        .iter()
+        .enumerate()
+        .map(|(index, spell)| {
+            let selected = if session.spell_selected == Some(index) {
+                " [SELECTED]"
+            } else {
+                ""
+            };
+            format!("[{}] {}{}", index + 1, spell.name, selected)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 }
 
 fn update_combat_timeline(
@@ -615,5 +805,87 @@ fn finish_if_won(units: Query<&Unit, With<CombatObject>>, mut next: ResMut<NextS
         .all(|unit| unit.team != Team::Enemy || unit.hp <= 0)
     {
         next.set(GameMode::World);
+    }
+}
+
+#[cfg(test)]
+mod spell_tests {
+    use super::*;
+
+    fn test_unit() -> Unit {
+        Unit {
+            team: Team::Player,
+            cell: IVec2::ZERO,
+            hp: 40,
+            max_hp: 100,
+            mp: 3,
+            ap: 6,
+            damage: 10,
+            armor: 0,
+        }
+    }
+
+    #[test]
+    fn configured_spells_deserialize_and_have_valid_costs_and_distances() {
+        let spells: Vec<Spell> = serde_json::from_str(include_str!("../assets/spells.json"))
+            .expect("the example spell configuration should deserialize");
+        assert!(!spells.is_empty());
+        assert!(
+            spells
+                .iter()
+                .all(|spell| spell.ap_cost >= 0 && spell.range >= 0 && valid_area(&spell.area))
+        );
+    }
+
+    #[test]
+    fn area_matrix_maps_affected_cells_around_its_center() {
+        let area = vec![
+            vec![false, true, false],
+            vec![true, true, true],
+            vec![false, true, false],
+        ];
+        let center = IVec2::new(3, 2);
+        assert!(valid_area(&area));
+        assert!(area_contains(&area, IVec2::ZERO));
+        assert!(area_contains(&area, IVec2::X));
+        assert!(!area_contains(&area, IVec2::ONE));
+        assert_eq!(area_cells(&area, center).len(), 5);
+    }
+
+    #[test]
+    fn spell_effects_damage_heal_and_adjust_other_stats_safely() {
+        let mut unit = test_unit();
+        apply_effect(
+            &mut unit,
+            &SpellEffect {
+                stat: SpellStat::Hp,
+                amount: -50,
+            },
+        );
+        assert_eq!(unit.hp, 0);
+        apply_effect(
+            &mut unit,
+            &SpellEffect {
+                stat: SpellStat::Hp,
+                amount: 200,
+            },
+        );
+        assert_eq!(unit.hp, unit.max_hp);
+        apply_effect(
+            &mut unit,
+            &SpellEffect {
+                stat: SpellStat::Ap,
+                amount: -20,
+            },
+        );
+        apply_effect(
+            &mut unit,
+            &SpellEffect {
+                stat: SpellStat::Armor,
+                amount: 4,
+            },
+        );
+        assert_eq!(unit.ap, 0);
+        assert_eq!(unit.armor, 4);
     }
 }

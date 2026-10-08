@@ -1,10 +1,40 @@
 use crate::config::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub(super) const SNAP: f32 = 16.0;
 const PANEL_WIDTH: f32 = 256.0;
 const PANEL_HEIGHT: f32 = 160.0;
 const HEADER_HEIGHT: f32 = 32.0;
+
+const HUD_LAYOUT_PATH: &str = "hud_layout.json";
+const STATS_KEY: &str = "Stats";
+
+#[derive(Resource, Default, Serialize, Deserialize)]
+struct HudLayout {
+    positions: HashMap<String, [f32; 2]>,
+}
+
+impl HudLayout {
+    fn position(&self, key: &str) -> Option<Vec2> {
+        self.positions
+            .get(key)
+            .map(|position| Vec2::from_array(*position))
+    }
+
+    fn set_position(&mut self, key: &str, position: Vec2) -> bool {
+        let next = position.to_array();
+        if self.positions.get(key).is_some_and(|current| {
+            (current[0] - next[0]).abs() < f32::EPSILON
+                && (current[1] - next[1]).abs() < f32::EPSILON
+        }) {
+            return false;
+        }
+        self.positions.insert(key.to_owned(), next);
+        true
+    }
+}
 
 #[derive(Resource)]
 pub(super) struct HudState {
@@ -46,6 +76,7 @@ struct CloseHudWindow(Entity);
 
 #[derive(Component)]
 pub(super) struct HudWindow {
+    key: String,
     position: Vec2,
     size: Vec2,
     dragging: bool,
@@ -55,19 +86,24 @@ pub(super) struct HudWindow {
 #[derive(Component)]
 struct SnapGrid;
 
+type StatsPanelFilter = (With<StatsPanel>, Without<SnapGrid>);
+
 pub(super) struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudState>()
-            .add_systems(Startup, setup_hud)
+            .init_resource::<HudLayout>()
+            .add_systems(Startup, (load_hud_layout, setup_hud).chain())
             .add_systems(
                 Update,
                 (
                     toggle_stats,
+                    restore_hud_window_positions,
                     interact_with_hud,
                     interact_with_hud_windows,
                     sync_hud,
+                    save_hud_layout,
                 )
                     .chain(),
             );
@@ -87,6 +123,7 @@ pub(super) fn spawn_hud_window<C: Component>(
         .spawn((
             DespawnOnExit(crate::combat::GameMode::Combat),
             HudWindow {
+                key: title.to_owned(),
                 position,
                 size,
                 dragging: false,
@@ -175,14 +212,30 @@ pub(super) fn spawn_hud_window<C: Component>(
     });
 }
 
-fn setup_hud(mut commands: Commands) {
+fn load_hud_layout(mut state: ResMut<HudState>, mut layout: ResMut<HudLayout>) {
+    match std::fs::read_to_string(HUD_LAYOUT_PATH) {
+        Ok(contents) => match serde_json::from_str::<HudLayout>(&contents) {
+            Ok(saved) => *layout = saved,
+            Err(error) => warn!("Could not parse {HUD_LAYOUT_PATH}: {error}"),
+        },
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            warn!("Could not read {HUD_LAYOUT_PATH}: {error}");
+        }
+        Err(_) => {}
+    }
+    if let Some(position) = layout.position(STATS_KEY) {
+        state.position = position;
+    }
+}
+
+fn setup_hud(mut commands: Commands, state: Res<HudState>) {
     commands
         .spawn((
             StatsPanel,
             Node {
                 position_type: PositionType::Absolute,
-                left: px(SNAP),
-                top: px(SNAP),
+                left: px(state.position.x),
+                top: px(state.position.y),
                 width: px(PANEL_WIDTH),
                 height: px(PANEL_HEIGHT),
                 flex_direction: FlexDirection::Column,
@@ -409,9 +462,45 @@ fn interact_with_hud_windows(
     }
 }
 
+fn restore_hud_window_positions(
+    layout: Res<HudLayout>,
+    mut windows: Query<(&mut HudWindow, &mut Node), Added<HudWindow>>,
+) {
+    for (mut window, mut node) in &mut windows {
+        if let Some(position) = layout.position(&window.key) {
+            window.position = position;
+            node.left = px(position.x.max(0.0));
+            node.top = px(position.y.max(0.0));
+        }
+    }
+}
+
+fn save_hud_layout(
+    state: Res<HudState>,
+    windows: Query<&HudWindow>,
+    mut layout: ResMut<HudLayout>,
+) {
+    if state.dragging || windows.iter().any(|window| window.dragging) {
+        return;
+    }
+    let mut changed = layout.set_position(STATS_KEY, state.position);
+    for window in &windows {
+        changed |= layout.set_position(&window.key, window.position);
+    }
+    if changed {
+        match serde_json::to_string_pretty(&*layout)
+            .map_err(std::io::Error::other)
+            .and_then(|contents| std::fs::write(HUD_LAYOUT_PATH, contents))
+        {
+            Ok(()) => {}
+            Err(error) => warn!("Could not save {HUD_LAYOUT_PATH}: {error}"),
+        }
+    }
+}
+
 fn sync_hud(
     state: Res<HudState>,
-    mut panel: Single<(&mut Node, &mut Visibility), (With<StatsPanel>, Without<SnapGrid>)>,
+    mut panel: Single<(&mut Node, &mut Visibility), StatsPanelFilter>,
     mut grid: Single<&mut Node, (With<SnapGrid>, Without<StatsPanel>)>,
     mode: Res<State<crate::combat::GameMode>>,
     windows: Query<&HudWindow>,
@@ -431,4 +520,21 @@ fn sync_hud(
     } else {
         Display::None
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hud_layout_round_trips_named_positions() {
+        let mut layout = HudLayout::default();
+        assert!(layout.set_position(STATS_KEY, Vec2::new(48.0, 64.0)));
+        assert!(!layout.set_position(STATS_KEY, Vec2::new(48.0, 64.0)));
+
+        let encoded = serde_json::to_string(&layout).unwrap();
+        let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.position(STATS_KEY), Some(Vec2::new(48.0, 64.0)));
+    }
 }

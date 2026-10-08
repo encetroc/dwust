@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Fireball",
+    "description": "Damage enemies in a small blast.",
+    "ap_cost": 3,
+    "range": 3,
+    "area": [
+      [false, true, false],
+      [true, true, true],
+      [false, true, false]
+    ],
+    "target": "enemy",
+    "effects": [
+      { "stat": "hp", "amount": -10 }
+    ]
+  },
+  {
+    "name": "Big Fireball",
+    "description": "Damage enemies in a big blast.",
+    "ap_cost": 3,
+    "range": 3,
+    "area": [
+      [false, false, true, false, false],
+      [false, true, true, true, false],
+      [true, true, true, true, true],
+      [false, true, true, true, false],
+      [false, false, true, false, false]
+    ],
+    "target": "enemy",
+    "effects": [
+      { "stat": "hp", "amount": -10 }
+    ]
+  },
+  {
+    "name": "Healing Light",
+    "description": "Restore health to the player.",
+    "ap_cost": 2,
+    "range": 0,
+    "area": [[true]],
+    "target": "ally",
+    "effects": [
+      { "stat": "hp", "amount": 20 }
+    ]
+  },
+  {
+    "name": "Battle Focus",
+    "description": "Increase the player's damage for this combat.",
+    "ap_cost": 2,
+    "range": 0,
+    "area": [[true]],
+    "target": "ally",
+    "effects": [
+      { "stat": "damage", "amount": 5 }
+    ]
+  }
+]
