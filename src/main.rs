@@ -151,6 +151,7 @@ struct Player {
     destination: Option<Vec3>,
     path: Vec<Vec3>,
     travel: Option<ScreenDirection>,
+    approach_enemy: Option<Entity>,
 }
 
 fn travel_destination(center: Vec3, half_extents: Vec2, direction: ScreenDirection) -> Vec3 {
@@ -486,6 +487,7 @@ fn handle_overlay_and_travel(
         }
     }
     if let Some(direction) = travel {
+        player.approach_enemy = None;
         player.destination = Some(travel_destination(
             screen.center,
             screen_half_extents(viewport.size),
@@ -585,7 +587,7 @@ fn update_status(screen: Res<WorldScreen>, mut text: Single<&mut Text, With<Stat
 fn set_destination(
     mouse: Res<ButtonInput<MouseButton>>,
     pointer: Res<OverlayPointer>,
-    enemies: Query<&GlobalTransform, With<combat::WorldEnemy>>,
+    enemies: Query<(Entity, &GlobalTransform), With<combat::WorldEnemy>>,
     animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
     viewport: Res<GameViewport>,
@@ -599,16 +601,24 @@ fn set_destination(
     let (camera, camera_transform) = *camera;
     if let Some(cursor) = viewport.cursor
         && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor)
-        && !combat::ray_hits_enemy(ray, &enemies)
-        && let Some(point) = ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
     {
-        player.travel = None;
-        player.path.clear();
-        player.destination = Some(clamp_to_screen(
-            point,
-            screen.center,
-            screen_half_extents(viewport.size),
-        ));
+        if let Some((enemy, position)) = combat::ray_hits_enemy(ray, &enemies) {
+            player.travel = None;
+            player.approach_enemy = Some(enemy);
+            player.path.clear();
+            player.destination = Some(Vec3::new(position.x, PLAYER_HEIGHT / 2.0, position.z));
+        } else if let Some(point) =
+            ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
+        {
+            player.travel = None;
+            player.approach_enemy = None;
+            player.path.clear();
+            player.destination = Some(clamp_to_screen(
+                point,
+                screen.center,
+                screen_half_extents(viewport.size),
+            ));
+        }
     }
 }
 
@@ -1056,6 +1066,7 @@ mod tests {
                         destination: None,
                         path: Vec::new(),
                         travel: Some(ScreenDirection::Right),
+                        approach_enemy: None,
                     },
                     Transform::from_translation(origin),
                 ))
