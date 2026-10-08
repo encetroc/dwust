@@ -36,6 +36,7 @@ pub(super) fn spawn_buildings(
                 + SCREEN_UP * (offset.y * half_extents.y)
                 + Vec3::Y * (size.y / 2.0);
             commands.spawn((
+                super::combat::WorldObject,
                 Building(size),
                 Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
                 MeshMaterial3d(material.clone()),

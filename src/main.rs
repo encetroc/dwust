@@ -9,6 +9,7 @@ use bevy::{
 };
 
 mod buildings;
+mod combat;
 mod config;
 mod headless;
 use config::*;
@@ -163,7 +164,9 @@ struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MovementSettings>()
+        app.init_state::<combat::GameMode>()
+            .add_plugins(combat::CombatPlugin)
+            .init_resource::<MovementSettings>()
             .init_resource::<ScreenAnimationSettings>()
             .init_resource::<ScreenAnimation>()
             .init_resource::<WorldScreen>()
@@ -183,7 +186,8 @@ impl Plugin for GamePlugin {
                     anchor_ground_texture,
                     update_status,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(in_state(combat::GameMode::World)),
             );
     }
 }
@@ -215,6 +219,7 @@ fn setup(
 ) {
     commands.spawn((
         Ground,
+        combat::WorldObject,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(WORLD_SIZE, WORLD_SIZE))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(images.add(checkerboard_texture())),
@@ -225,6 +230,7 @@ fn setup(
 
     commands.spawn((
         Player::default(),
+        combat::WorldObject,
         Mesh3d(meshes.add(Capsule3d::new(
             PLAYER_RADIUS,
             PLAYER_HEIGHT - 2.0 * PLAYER_RADIUS,
@@ -294,6 +300,7 @@ fn checkerboard_texture() -> Image {
 fn setup_overlay(mut commands: Commands) {
     commands.spawn((
         StatusText,
+        combat::WorldUi,
         Pickable::IGNORE,
         Text::new(""),
         TextFont {
@@ -352,6 +359,7 @@ fn setup_overlay(mut commands: Commands) {
         commands
             .spawn((
                 action,
+                combat::WorldUi,
                 Node {
                     position_type: PositionType::Absolute,
                     width: px(56),
@@ -577,6 +585,7 @@ fn update_status(screen: Res<WorldScreen>, mut text: Single<&mut Text, With<Stat
 fn set_destination(
     mouse: Res<ButtonInput<MouseButton>>,
     pointer: Res<OverlayPointer>,
+    enemies: Query<&GlobalTransform, With<combat::WorldEnemy>>,
     animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
     viewport: Res<GameViewport>,
@@ -590,6 +599,7 @@ fn set_destination(
     let (camera, camera_transform) = *camera;
     if let Some(cursor) = viewport.cursor
         && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor)
+        && !combat::ray_hits_enemy(ray, &enemies)
         && let Some(point) = ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
     {
         player.travel = None;
