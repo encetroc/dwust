@@ -6,7 +6,6 @@ pub const SCREEN_ANIMATION_ENABLED: bool = true;
 pub const SCREEN_ANIMATION_DURATION: f32 = 0.18;
 
 pub const WORLD_SIZE: f32 = 128.0;
-pub const TILE_COUNT: u32 = 64;
 pub const PLAYER_RADIUS: f32 = 0.4;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 pub const VIEW_HEIGHT: f32 = 32.0;

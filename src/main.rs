@@ -1,11 +1,5 @@
 use bevy::{
-    asset::RenderAssetUsages,
-    camera::ScalingMode,
-    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
-    math::Affine2,
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-    window::PrimaryWindow,
+    camera::ScalingMode, prelude::*, render::render_resource::TextureFormat, window::PrimaryWindow,
 };
 
 mod buildings;
@@ -45,12 +39,19 @@ struct Ground;
 #[derive(Component)]
 struct StatusText;
 
+#[derive(Component)]
+struct ScreenPreview(ScreenDirection);
+
 #[derive(Component, Clone, Copy)]
 enum ScreenDirection {
     Up,
     Down,
     Left,
     Right,
+    UpLeft,
+    UpRight,
+    DownLeft,
+    DownRight,
 }
 
 impl ScreenDirection {
@@ -60,6 +61,10 @@ impl ScreenDirection {
             Self::Down => IVec2::new(0, 1),
             Self::Left => IVec2::new(-1, 0),
             Self::Right => IVec2::new(1, 0),
+            Self::UpLeft => IVec2::new(-1, -1),
+            Self::UpRight => IVec2::new(1, -1),
+            Self::DownLeft => IVec2::new(-1, 1),
+            Self::DownRight => IVec2::new(1, 1),
         }
     }
 }
@@ -75,6 +80,7 @@ struct OverlayInput(OverlayAction);
 #[derive(Resource, Default)]
 struct OverlayPointer {
     hovered: Option<Entity>,
+    overlay_pressed: bool,
 }
 
 // The same input seam supports a real window and windowless verification.
@@ -131,11 +137,16 @@ fn screen_transition(
     let bounds = (half_extents - SCREEN_MARGIN).max(Vec2::ZERO);
     let mut horizontal = local.dot(SCREEN_RIGHT);
     let mut vertical = local.dot(SCREEN_UP);
-    match direction {
-        ScreenDirection::Up => vertical = -bounds.y,
-        ScreenDirection::Down => vertical = bounds.y,
-        ScreenDirection::Left => horizontal = bounds.x,
-        ScreenDirection::Right => horizontal = -bounds.x,
+    let offset = direction.grid_offset();
+    if offset.x < 0 {
+        horizontal = bounds.x;
+    } else if offset.x > 0 {
+        horizontal = -bounds.x;
+    }
+    if offset.y < 0 {
+        vertical = -bounds.y;
+    } else if offset.y > 0 {
+        vertical = bounds.y;
     }
     (
         next_center,
@@ -154,11 +165,24 @@ struct Player {
     approach_enemy: Option<Entity>,
 }
 
-fn travel_destination(center: Vec3, half_extents: Vec2, direction: ScreenDirection) -> Vec3 {
+fn travel_destination(
+    position: Vec3,
+    center: Vec3,
+    half_extents: Vec2,
+    direction: ScreenDirection,
+) -> Vec3 {
     let bounds = (half_extents - SCREEN_MARGIN).max(Vec2::ZERO);
     let offset = direction.grid_offset();
-    center + SCREEN_RIGHT * (offset.x as f32 * bounds.x) - SCREEN_UP * (offset.y as f32 * bounds.y)
-        + Vec3::Y * (PLAYER_HEIGHT / 2.0)
+    let local = position - center;
+    let mut horizontal = local.dot(SCREEN_RIGHT).clamp(-bounds.x, bounds.x);
+    let mut vertical = local.dot(SCREEN_UP).clamp(-bounds.y, bounds.y);
+    if offset.x != 0 {
+        horizontal = offset.x as f32 * bounds.x;
+    }
+    if offset.y != 0 {
+        vertical = -(offset.y as f32) * bounds.y;
+    }
+    center + SCREEN_RIGHT * horizontal + SCREEN_UP * vertical + Vec3::Y * (PLAYER_HEIGHT / 2.0)
 }
 
 struct GamePlugin;
@@ -184,7 +208,7 @@ impl Plugin for GamePlugin {
                     move_player,
                     finish_travel,
                     animate_screen,
-                    anchor_ground_texture,
+                    update_screen_colors,
                     update_status,
                 )
                     .chain()
@@ -216,14 +240,13 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
 ) {
     commands.spawn((
         Ground,
         combat::WorldObject,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(WORLD_SIZE, WORLD_SIZE))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(checkerboard_texture())),
+            base_color: screen_color(IVec2::ZERO),
             unlit: true,
             ..default()
         })),
@@ -267,35 +290,22 @@ fn setup(
     ));
 }
 
-fn checkerboard_texture() -> Image {
-    let mut pixels = Vec::with_capacity((TILE_COUNT * TILE_COUNT * 4) as usize);
-    for row in 0..TILE_COUNT {
-        for column in 0..TILE_COUNT {
-            let color = if (row + column) % 2 == 0 {
-                [205, 199, 177, 255]
-            } else {
-                [145, 143, 126, 255]
-            };
-            pixels.extend_from_slice(&color);
-        }
-    }
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: TILE_COUNT,
-            height: TILE_COUNT,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &pixels,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        ..ImageSamplerDescriptor::nearest()
-    });
-    image
+fn screen_color(coordinates: IVec2) -> Color {
+    // A repeating 3x3 palette guarantees each screen and its eight neighbors differ.
+    const PALETTE: [Color; 9] = [
+        Color::srgb(0.85, 0.20, 0.18), // coral red
+        Color::srgb(0.16, 0.48, 0.88), // blue
+        Color::srgb(0.22, 0.68, 0.34), // green
+        Color::srgb(0.95, 0.72, 0.16), // gold
+        Color::srgb(0.58, 0.30, 0.78), // purple
+        Color::srgb(0.12, 0.72, 0.76), // cyan
+        Color::srgb(0.94, 0.43, 0.14), // orange
+        Color::srgb(0.88, 0.34, 0.60), // pink
+        Color::srgb(0.40, 0.56, 0.24), // olive
+    ];
+    let column = coordinates.x.rem_euclid(3) as usize;
+    let row = coordinates.y.rem_euclid(3) as usize;
+    PALETTE[row * 3 + column]
 }
 
 fn setup_overlay(mut commands: Commands) {
@@ -319,104 +329,103 @@ fn setup_overlay(mut commands: Commands) {
         },
     ));
 
-    for (action, position) in [
+    // Match the reference: four edge strips plus four corner previews around the current screen.
+    for (direction, node) in [
         (
-            OverlayAction::Travel(ScreenDirection::Up),
+            ScreenDirection::Up,
             Node {
-                top: px(12),
-                left: percent(50),
-                margin: UiRect::left(px(-28)),
+                top: percent(0),
+                left: percent(7),
+                width: percent(86),
+                height: percent(10),
                 ..default()
             },
         ),
         (
-            OverlayAction::Travel(ScreenDirection::Down),
+            ScreenDirection::Down,
             Node {
-                bottom: px(12),
-                left: percent(50),
-                margin: UiRect::left(px(-28)),
+                bottom: percent(0),
+                left: percent(7),
+                width: percent(86),
+                height: percent(10),
                 ..default()
             },
         ),
         (
-            OverlayAction::Travel(ScreenDirection::Left),
+            ScreenDirection::Left,
             Node {
-                left: px(12),
-                top: percent(50),
-                margin: UiRect::top(px(-24)),
+                left: percent(0),
+                top: percent(10),
+                width: percent(7),
+                height: percent(80),
                 ..default()
             },
         ),
         (
-            OverlayAction::Travel(ScreenDirection::Right),
+            ScreenDirection::Right,
             Node {
-                right: px(12),
-                top: percent(50),
-                margin: UiRect::top(px(-24)),
+                right: percent(0),
+                top: percent(10),
+                width: percent(7),
+                height: percent(80),
+                ..default()
+            },
+        ),
+        (
+            ScreenDirection::UpLeft,
+            Node {
+                top: percent(0),
+                left: percent(0),
+                width: percent(7),
+                height: percent(10),
+                ..default()
+            },
+        ),
+        (
+            ScreenDirection::UpRight,
+            Node {
+                top: percent(0),
+                right: percent(0),
+                width: percent(7),
+                height: percent(10),
+                ..default()
+            },
+        ),
+        (
+            ScreenDirection::DownLeft,
+            Node {
+                bottom: percent(0),
+                left: percent(0),
+                width: percent(7),
+                height: percent(10),
+                ..default()
+            },
+        ),
+        (
+            ScreenDirection::DownRight,
+            Node {
+                bottom: percent(0),
+                right: percent(0),
+                width: percent(7),
+                height: percent(10),
                 ..default()
             },
         ),
     ] {
+        let mut node = node;
+        node.position_type = PositionType::Absolute;
         commands
             .spawn((
-                action,
+                ScreenPreview(direction),
+                OverlayAction::Travel(direction),
                 combat::WorldUi,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: px(56),
-                    height: px(48),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..position
-                },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.1, 0.85)),
+                Pickable::default(),
+                node,
+                BackgroundColor(screen_color(direction.grid_offset())),
             ))
             .observe(overlay_over)
             .observe(overlay_out)
-            .observe(overlay_press)
-            .with_children(|parent| {
-                let OverlayAction::Travel(direction) = action;
-                {
-                    let angle = match direction {
-                        ScreenDirection::Right => 0.0,
-                        ScreenDirection::Down => std::f32::consts::FRAC_PI_2,
-                        ScreenDirection::Left => std::f32::consts::PI,
-                        ScreenDirection::Up => -std::f32::consts::FRAC_PI_2,
-                    };
-                    // Draw arrows as UI geometry: the default font lacks arrow glyphs.
-                    parent
-                        .spawn((
-                            Pickable::IGNORE,
-                            Node {
-                                width: px(28),
-                                height: px(28),
-                                ..default()
-                            },
-                            UiTransform::from_rotation(Rot2::radians(angle)),
-                        ))
-                        .with_children(|icon| {
-                            for (left, top, width, rotation) in [
-                                (1.0, 12.0, 24.0, 0.0),
-                                (14.0, 8.0, 14.0, std::f32::consts::FRAC_PI_4),
-                                (14.0, 16.0, 14.0, -std::f32::consts::FRAC_PI_4),
-                            ] {
-                                icon.spawn((
-                                    Pickable::IGNORE,
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        left: px(left),
-                                        top: px(top),
-                                        width: px(width),
-                                        height: px(4),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::WHITE),
-                                    UiTransform::from_rotation(Rot2::radians(rotation)),
-                                ));
-                            }
-                        });
-                }
-            });
+            .observe(overlay_press);
     }
 }
 
@@ -434,13 +443,14 @@ fn overlay_over(
 fn overlay_out(
     event: On<Pointer<Out>>,
     mut pointer: ResMut<OverlayPointer>,
-    mut colors: Query<&mut BackgroundColor>,
+    screen: Res<WorldScreen>,
+    mut previews: Query<(&ScreenPreview, &mut BackgroundColor)>,
 ) {
     if pointer.hovered == Some(event.entity) {
         pointer.hovered = None;
     }
-    if let Ok(mut color) = colors.get_mut(event.entity) {
-        color.0 = Color::srgba(0.05, 0.07, 0.1, 0.85);
+    if let Ok((preview, mut color)) = previews.get_mut(event.entity) {
+        color.0 = screen_color(screen.coordinates + preview.0.grid_offset());
     }
 }
 
@@ -448,11 +458,13 @@ fn overlay_press(
     mut event: On<Pointer<Press>>,
     actions: Query<&OverlayAction>,
     mut inputs: MessageWriter<OverlayInput>,
+    mut pointer: ResMut<OverlayPointer>,
 ) {
     if event.button == PointerButton::Primary
         && let Ok(action) = actions.get(event.entity)
     {
         inputs.write(OverlayInput(*action));
+        pointer.overlay_pressed = true;
         event.propagate(false);
     }
 }
@@ -465,7 +477,7 @@ fn handle_overlay_and_travel(
     mut inputs: MessageReader<OverlayInput>,
     animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
-    mut player: Single<&mut Player>,
+    mut player: Single<(&Transform, &mut Player)>,
 ) {
     let mut travel = None;
     for input in inputs.read() {
@@ -487,8 +499,10 @@ fn handle_overlay_and_travel(
         }
     }
     if let Some(direction) = travel {
+        let (transform, player) = &mut *player;
         player.approach_enemy = None;
         player.destination = Some(travel_destination(
+            transform.translation,
             screen.center,
             screen_half_extents(viewport.size),
             direction,
@@ -564,17 +578,19 @@ fn animate_screen(
     }
 }
 
-// Temporary development checker: keep its UVs anchored to the world even
-// though the finite floor mesh follows the camera for screen coverage.
-fn anchor_ground_texture(
-    ground: Query<(&Transform, &MeshMaterial3d<StandardMaterial>), With<Ground>>,
+fn update_screen_colors(
+    screen: Res<WorldScreen>,
+    ground: Single<&MeshMaterial3d<StandardMaterial>, With<Ground>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut previews: Query<(&ScreenPreview, &mut BackgroundColor)>,
 ) {
-    for (transform, handle) in &ground {
-        if let Some(mut material) = materials.get_mut(&handle.0) {
-            let offset = Vec2::new(transform.translation.x, transform.translation.z) / WORLD_SIZE;
-            material.uv_transform = Affine2::from_translation(offset);
-        }
+    if screen.is_changed()
+        && let Some(mut material) = materials.get_mut(&ground.0)
+    {
+        material.base_color = screen_color(screen.coordinates);
+    }
+    for (preview, mut color) in &mut previews {
+        color.0 = screen_color(screen.coordinates + preview.0.grid_offset());
     }
 }
 
@@ -586,7 +602,7 @@ fn update_status(screen: Res<WorldScreen>, mut text: Single<&mut Text, With<Stat
 
 fn set_destination(
     mouse: Res<ButtonInput<MouseButton>>,
-    pointer: Res<OverlayPointer>,
+    mut pointer: ResMut<OverlayPointer>,
     enemies: Query<(Entity, &GlobalTransform), With<combat::WorldEnemy>>,
     animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
@@ -594,6 +610,10 @@ fn set_destination(
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut player: Single<&mut Player>,
 ) {
+    if pointer.overlay_pressed {
+        pointer.overlay_pressed = false;
+        return;
+    }
     if animation.0.is_some() || !mouse.just_pressed(MouseButton::Left) || pointer.hovered.is_some()
     {
         return;
@@ -876,6 +896,54 @@ mod tests {
     }
 
     #[test]
+    fn cardinal_travel_targets_the_nearest_point_on_the_selected_edge() {
+        let center = Vec3::ZERO;
+        let extents = Vec2::new(28.0, 32.0);
+        let start = SCREEN_RIGHT * 7.0 + SCREEN_UP * 8.0 + Vec3::Y * (PLAYER_HEIGHT / 2.0);
+        for direction in [
+            ScreenDirection::Up,
+            ScreenDirection::Down,
+            ScreenDirection::Left,
+            ScreenDirection::Right,
+        ] {
+            let destination = travel_destination(start, center, extents, direction);
+            let local = destination - center;
+            let offset = direction.grid_offset();
+            if offset.x == 0 {
+                assert!((local.dot(SCREEN_RIGHT) - 7.0).abs() < 0.0001);
+                assert!((local.dot(SCREEN_UP) + offset.y as f32 * 22.0).abs() < 0.0001);
+            } else {
+                assert!((local.dot(SCREEN_UP) - 8.0).abs() < 0.0001);
+                assert!((local.dot(SCREEN_RIGHT) - offset.x as f32 * 24.0).abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn diagonal_screen_travel_changes_both_coordinates_and_enters_the_matching_corner() {
+        let extents = Vec2::new(28.0, 32.0);
+        let center = Vec3::ZERO;
+        let start = Vec3::Y * (PLAYER_HEIGHT / 2.0);
+        for direction in [
+            ScreenDirection::UpLeft,
+            ScreenDirection::UpRight,
+            ScreenDirection::DownLeft,
+            ScreenDirection::DownRight,
+        ] {
+            let offset = direction.grid_offset();
+            let (next_center, entry) = screen_transition(start, center, extents, direction);
+            assert_eq!(
+                next_center,
+                SCREEN_RIGHT * (offset.x as f32 * extents.x * 2.0)
+                    - SCREEN_UP * (offset.y as f32 * extents.y * 2.0)
+            );
+            let local = entry - next_center;
+            assert_eq!(local.dot(SCREEN_RIGHT).signum(), -(offset.x as f32));
+            assert_eq!(local.dot(SCREEN_UP).signum(), offset.y as f32);
+        }
+    }
+
+    #[test]
     fn destination_bounds_use_camera_axes_on_distant_screens() {
         let center = SCREEN_RIGHT * 200.0 - SCREEN_UP * 320.0;
         let extents = Vec2::new(28.0, 32.0);
@@ -1020,6 +1088,18 @@ mod tests {
     }
 
     #[test]
+    fn screen_colors_are_stable_and_all_nine_neighbor_screens_differ() {
+        let center = IVec2::new(-5, 7);
+        assert_eq!(screen_color(center), screen_color(center));
+        let colors: Vec<_> = (-1..=1)
+            .flat_map(|y| (-1..=1).map(move |x| screen_color(center + IVec2::new(x, y))))
+            .collect();
+        for (index, color) in colors.iter().enumerate() {
+            assert!(colors[index + 1..].iter().all(|other| color != other));
+        }
+    }
+
+    #[test]
     fn screen_tween_eases_and_clamps_progress() {
         assert_eq!(transition_progress(0.0, 0.2), 0.0);
         assert_eq!(transition_progress(0.1, 0.2), 0.5);
@@ -1050,13 +1130,7 @@ mod tests {
                 .add_message::<OverlayInput>()
                 .add_systems(
                     Update,
-                    (
-                        handle_overlay_and_travel,
-                        finish_travel,
-                        animate_screen,
-                        anchor_ground_texture,
-                    )
-                        .chain(),
+                    (handle_overlay_and_travel, finish_travel, animate_screen).chain(),
                 );
             let origin = Vec3::Y * (PLAYER_HEIGHT / 2.0);
             let player = app
@@ -1117,21 +1191,6 @@ mod tests {
             let halfway_camera = app.world().get::<Transform>(camera).unwrap().translation;
             assert!(halfway_camera.distance(camera_origin) > 0.0);
             assert!(halfway_camera.distance(camera_origin) < center.length());
-            // A fixed world point must keep the same checker UV as the floor recenters.
-            let ground_position = app.world().get::<Transform>(ground).unwrap().translation;
-            let local_uv =
-                Vec2::splat(0.5) - Vec2::new(ground_position.x, ground_position.z) / WORLD_SIZE;
-            let world_uv = app
-                .world()
-                .resource::<Assets<StandardMaterial>>()
-                .get(&material)
-                .unwrap()
-                .uv_transform
-                .transform_point2(local_uv);
-            assert!(
-                world_uv.distance(Vec2::splat(0.5)) < 0.00001,
-                "checker pattern moved with the camera instead of staying anchored to the world"
-            );
             for _ in 0..((duration / 0.02).ceil() as usize + 2) {
                 app.update();
             }
@@ -1152,15 +1211,6 @@ mod tests {
                 app.world().get::<Transform>(ground).unwrap().translation,
                 center
             );
-            let local_uv = Vec2::splat(0.5) - Vec2::new(center.x, center.z) / WORLD_SIZE;
-            let world_uv = app
-                .world()
-                .resource::<Assets<StandardMaterial>>()
-                .get(&material)
-                .unwrap()
-                .uv_transform
-                .transform_point2(local_uv);
-            assert!(world_uv.distance(Vec2::splat(0.5)) < 0.00001);
             let (_, entry) = screen_transition(
                 origin,
                 Vec3::ZERO,

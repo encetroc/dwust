@@ -224,15 +224,24 @@ fn checkpoint(
             10 => IVec2::new(0, 1),
             _ => IVec2::ZERO,
         };
-        assert_eq!(
-            screen.coordinates, previous,
-            "arrow teleported before walking"
-        );
-        assert!(player.1.travel.is_some(), "arrow did not start travel");
-        assert!(
-            player.1.destination.is_some(),
-            "arrow did not start walking"
-        );
+        if screen.coordinates == previous {
+            assert!(player.1.travel.is_some(), "arrow did not start travel");
+            assert!(
+                player.1.destination.is_some(),
+                "arrow did not start walking toward its nearest edge point"
+            );
+        } else {
+            let expected = match verification.stage {
+                7 => IVec2::new(1, 0),
+                8 => IVec2::new(1, 1),
+                9 => IVec2::new(0, 1),
+                _ => IVec2::ZERO,
+            };
+            assert_eq!(
+                screen.coordinates, expected,
+                "instant transition is valid only when already at the nearest edge point"
+            );
+        }
     }
     let wait = match verification.stage {
         0 => 120,
@@ -299,7 +308,7 @@ fn checkpoint(
             verification.elapsed = 0;
             verification.pending = false;
             if verification.captures == CHECKPOINTS.len() {
-                let summary = format!("PASS: Bevy 0.19.1, 1280x720, zero windows, ground movement and speed per tick, minimal overlay, four keyboard directions, four overlay walk-before-travel directions, {} checked captures\n", verification.captures);
+                let summary = format!("PASS: Bevy 0.19.1, 1280x720, zero windows, ground movement and speed per tick, minimal overlay, four keyboard directions, four overlay nearest-edge travel directions, {} checked captures\n", verification.captures);
                 std::fs::write(output.join("result.txt"), &summary).expect("save result");
                 println!("{summary}");
                 exit.write(AppExit::Success);
