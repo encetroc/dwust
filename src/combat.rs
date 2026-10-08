@@ -38,8 +38,16 @@ struct Unit {
     max_hp: i32,
     mp: i32,
     ap: i32,
-    damage: i32,
-    armor: i32,
+    physical_damage: i32,
+    magical_damage: i32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DamageType {
+    Physical,
+    #[default]
+    Magical,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -49,8 +57,8 @@ enum SpellStat {
     MaxHp,
     Mp,
     Ap,
-    Damage,
-    Armor,
+    PhysicalDamage,
+    MagicalDamage,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -72,6 +80,11 @@ struct Spell {
     name: String,
     ap_cost: i32,
     range: i32,
+    /// Base damage before the caster's matching percentage bonus is applied.
+    #[serde(default)]
+    base_damage: i32,
+    #[serde(default)]
+    damage_type: DamageType,
     /// Row-major footprint centered on the targeted cell; true cells are affected.
     area: Vec<Vec<bool>>,
     target: SpellTarget,
@@ -157,9 +170,12 @@ fn load_spells(mut book: ResMut<SpellBook>) {
         "assets/spells.json must define at least one spell"
     );
     assert!(
-        spells
-            .iter()
-            .all(|spell| { spell.ap_cost >= 0 && spell.range >= 0 && valid_area(&spell.area) }),
+        spells.iter().all(|spell| {
+            spell.ap_cost >= 0
+                && spell.range >= 0
+                && spell.base_damage >= 0
+                && valid_area(&spell.area)
+        }),
         "spell AP cost and range must be non-negative; area must be a non-empty odd-sized matrix with a true center"
     );
     book.0 = spells;
@@ -314,7 +330,7 @@ fn enter_combat(
         "HP / MP / AP",
         CombatStats,
         Vec2::new(16.0, 192.0),
-        Vec2::new(256.0, 64.0),
+        Vec2::new(256.0, 80.0),
         "",
         16.0,
     );
@@ -358,8 +374,8 @@ fn spawn_unit(
                 max_hp: hp,
                 mp: if team == Team::Player { 3 } else { 0 },
                 ap: if team == Team::Player { 6 } else { 0 },
-                damage: 10,
-                armor: 0,
+                physical_damage: 0,
+                magical_damage: 0,
             },
             Mesh3d(meshes.add(Sphere::new(0.72).mesh().uv(24, 16))),
             MeshMaterial3d(materials.add(color)),
@@ -479,6 +495,10 @@ fn combat_input(
             return;
         }
         let spell = spell.clone();
+        let caster_bonus = units
+            .get(player_entity)
+            .map_or(0, |(_, unit, _)| damage_bonus(unit, spell.damage_type));
+        let dealt_damage = calculate_damage(spell.base_damage, caster_bonus);
         if let Ok((_, mut player, _)) = units.get_mut(player_entity) {
             player.ap -= spell.ap_cost;
         }
@@ -489,6 +509,9 @@ fn combat_input(
                 || !target_matches(spell.target, unit.team)
             {
                 continue;
+            }
+            if dealt_damage > 0 {
+                unit.hp = unit.hp.saturating_sub(dealt_damage).max(0);
             }
             for effect in &spell.effects {
                 apply_effect(&mut unit, effect);
@@ -569,17 +592,34 @@ fn target_matches(target: SpellTarget, team: Team) -> bool {
     }
 }
 
+fn damage_bonus(unit: &Unit, damage_type: DamageType) -> i32 {
+    match damage_type {
+        DamageType::Physical => unit.physical_damage,
+        DamageType::Magical => unit.magical_damage,
+    }
+}
+
+fn calculate_damage(base_damage: i32, damage_bonus_percent: i32) -> i32 {
+    (base_damage.max(0) as f64 * (1.0 + damage_bonus_percent as f64 / 100.0))
+        .round()
+        .clamp(0.0, i32::MAX as f64) as i32
+}
+
 fn apply_effect(unit: &mut Unit, effect: &SpellEffect) {
     match effect.stat {
-        SpellStat::Hp => unit.hp = (unit.hp + effect.amount).clamp(0, unit.max_hp),
+        SpellStat::Hp => unit.hp = unit.hp.saturating_add(effect.amount).clamp(0, unit.max_hp),
         SpellStat::MaxHp => {
-            unit.max_hp = (unit.max_hp + effect.amount).max(1);
+            unit.max_hp = unit.max_hp.saturating_add(effect.amount).max(1);
             unit.hp = unit.hp.min(unit.max_hp);
         }
-        SpellStat::Mp => unit.mp = (unit.mp + effect.amount).max(0),
-        SpellStat::Ap => unit.ap = (unit.ap + effect.amount).max(0),
-        SpellStat::Damage => unit.damage = (unit.damage + effect.amount).max(0),
-        SpellStat::Armor => unit.armor = (unit.armor + effect.amount).max(0),
+        SpellStat::Mp => unit.mp = unit.mp.saturating_add(effect.amount).max(0),
+        SpellStat::Ap => unit.ap = unit.ap.saturating_add(effect.amount).max(0),
+        SpellStat::PhysicalDamage => {
+            unit.physical_damage = unit.physical_damage.saturating_add(effect.amount)
+        }
+        SpellStat::MagicalDamage => {
+            unit.magical_damage = unit.magical_damage.saturating_add(effect.amount)
+        }
     }
 }
 
@@ -741,7 +781,10 @@ fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Q
     let hp = player.map_or(0, |unit| unit.hp.max(0));
     let mp = player.map_or(0, |unit| unit.mp);
     let ap = player.map_or(0, |unit| unit.ap);
-    stats.0 = format!("HP {hp}    MP {mp}    AP {ap}");
+    let physical = player.map_or(0, |unit| unit.physical_damage);
+    let magical = player.map_or(0, |unit| unit.magical_damage);
+    stats.0 =
+        format!("HP {hp}    MP {mp}    AP {ap}\nPhysical +{physical}%    Magical +{magical}%");
 }
 
 fn update_combat_spells(
@@ -759,7 +802,21 @@ fn update_combat_spells(
             } else {
                 ""
             };
-            format!("[{}] {}{}", index + 1, spell.name, selected)
+            let damage = if spell.base_damage > 0 {
+                format!(
+                    " — {} AP, {} {} ({})",
+                    spell.ap_cost,
+                    spell.base_damage,
+                    match spell.damage_type {
+                        DamageType::Physical => "physical",
+                        DamageType::Magical => "magical",
+                    },
+                    spell.range
+                )
+            } else {
+                format!(" — {} AP, range {}", spell.ap_cost, spell.range)
+            };
+            format!("[{}] {}{}{}", index + 1, spell.name, damage, selected)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -820,8 +877,8 @@ mod spell_tests {
             max_hp: 100,
             mp: 3,
             ap: 6,
-            damage: 10,
-            armor: 0,
+            physical_damage: 0,
+            magical_damage: 0,
         }
     }
 
@@ -830,11 +887,12 @@ mod spell_tests {
         let spells: Vec<Spell> = serde_json::from_str(include_str!("../assets/spells.json"))
             .expect("the example spell configuration should deserialize");
         assert!(!spells.is_empty());
-        assert!(
-            spells
-                .iter()
-                .all(|spell| spell.ap_cost >= 0 && spell.range >= 0 && valid_area(&spell.area))
-        );
+        assert!(spells.iter().all(|spell| {
+            spell.ap_cost >= 0
+                && spell.range >= 0
+                && spell.base_damage >= 0
+                && valid_area(&spell.area)
+        }));
     }
 
     #[test]
@@ -850,6 +908,23 @@ mod spell_tests {
         assert!(area_contains(&area, IVec2::X));
         assert!(!area_contains(&area, IVec2::ONE));
         assert_eq!(area_cells(&area, center).len(), 5);
+    }
+
+    #[test]
+    fn damage_uses_the_matching_percentage_bonus_and_rounds_to_whole_hp() {
+        let mut unit = test_unit();
+        unit.physical_damage = 25;
+        unit.magical_damage = 50;
+        assert_eq!(
+            calculate_damage(20, damage_bonus(&unit, DamageType::Physical)),
+            25
+        );
+        assert_eq!(
+            calculate_damage(20, damage_bonus(&unit, DamageType::Magical)),
+            30
+        );
+        assert_eq!(calculate_damage(9, 10), 10);
+        assert_eq!(calculate_damage(20, -150), 0);
     }
 
     #[test]
@@ -881,11 +956,11 @@ mod spell_tests {
         apply_effect(
             &mut unit,
             &SpellEffect {
-                stat: SpellStat::Armor,
-                amount: 4,
+                stat: SpellStat::PhysicalDamage,
+                amount: 40,
             },
         );
         assert_eq!(unit.ap, 0);
-        assert_eq!(unit.armor, 4);
+        assert_eq!(unit.physical_damage, 40);
     }
 }

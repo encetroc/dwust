@@ -1,24 +1,26 @@
 [
   {
     "name": "Fireball",
-    "description": "Damage enemies in a small blast.",
+    "description": "Magical damage to enemies in a small blast.",
     "ap_cost": 3,
     "range": 3,
+    "base_damage": 10,
+    "damage_type": "magical",
     "area": [
       [false, true, false],
       [true, true, true],
       [false, true, false]
     ],
     "target": "enemy",
-    "effects": [
-      { "stat": "hp", "amount": -10 }
-    ]
+    "effects": []
   },
   {
     "name": "Big Fireball",
-    "description": "Damage enemies in a big blast.",
+    "description": "Magical damage to enemies in a big blast.",
     "ap_cost": 3,
     "range": 3,
+    "base_damage": 10,
+    "damage_type": "magical",
     "area": [
       [false, false, true, false, false],
       [false, true, true, true, false],
@@ -27,15 +29,15 @@
       [false, false, true, false, false]
     ],
     "target": "enemy",
-    "effects": [
-      { "stat": "hp", "amount": -10 }
-    ]
+    "effects": []
   },
   {
     "name": "Healing Light",
     "description": "Restore health to the player.",
     "ap_cost": 2,
     "range": 0,
+    "base_damage": 0,
+    "damage_type": "magical",
     "area": [[true]],
     "target": "ally",
     "effects": [
@@ -44,13 +46,15 @@
   },
   {
     "name": "Battle Focus",
-    "description": "Increase the player's damage for this combat.",
+    "description": "Increase the player's magical damage by 25% for this combat.",
     "ap_cost": 2,
     "range": 0,
+    "base_damage": 0,
+    "damage_type": "magical",
     "area": [[true]],
     "target": "ally",
     "effects": [
-      { "stat": "damage", "amount": 5 }
+      { "stat": "magical_damage", "amount": 25 }
     ]
   }
 ]
