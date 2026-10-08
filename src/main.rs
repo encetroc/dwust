@@ -10,25 +10,6 @@ mod hud;
 use config::*;
 
 #[derive(Resource, Default)]
-struct ScreenAnimation(Option<ScreenTween>);
-
-struct ScreenTween {
-    elapsed: f32,
-    duration: f32,
-    camera_start: Vec3,
-    camera_end: Vec3,
-    ground_start: Vec3,
-    ground_end: Vec3,
-    player_start: Vec3,
-    player_end: Vec3,
-}
-
-fn transition_progress(elapsed: f32, duration: f32) -> f32 {
-    let t = (elapsed / duration).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-#[derive(Resource, Default)]
 struct WorldScreen {
     coordinates: IVec2,
     center: Vec3,
@@ -39,9 +20,6 @@ struct Ground;
 
 #[derive(Component)]
 struct StatusText;
-
-#[derive(Component)]
-struct ScreenPreview(ScreenDirection);
 
 #[derive(Component, Clone, Copy)]
 enum ScreenDirection {
@@ -56,6 +34,11 @@ enum ScreenDirection {
 }
 
 impl ScreenDirection {
+    fn arrow_rotation(self) -> Rot2 {
+        let offset = self.grid_offset();
+        Rot2::radians((offset.y as f32).atan2(offset.x as f32) + std::f32::consts::FRAC_PI_4)
+    }
+
     fn grid_offset(self) -> IVec2 {
         match self {
             Self::Up => IVec2::new(0, -1),
@@ -193,8 +176,6 @@ impl Plugin for GamePlugin {
         app.init_state::<combat::GameMode>()
             .add_plugins((combat::CombatPlugin, hud::HudPlugin))
             .init_resource::<MovementSettings>()
-            .init_resource::<ScreenAnimationSettings>()
-            .init_resource::<ScreenAnimation>()
             .init_resource::<WorldScreen>()
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()
@@ -208,8 +189,6 @@ impl Plugin for GamePlugin {
                     set_destination,
                     move_player,
                     finish_travel,
-                    animate_screen,
-                    update_screen_colors,
                     update_status,
                 )
                     .chain()
@@ -247,7 +226,7 @@ fn setup(
         combat::WorldObject,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(WORLD_SIZE, WORLD_SIZE))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: screen_color(IVec2::ZERO),
+            base_color: GROUND_COLOR,
             unlit: true,
             ..default()
         })),
@@ -291,24 +270,6 @@ fn setup(
     ));
 }
 
-fn screen_color(coordinates: IVec2) -> Color {
-    // A repeating 3x3 palette guarantees each screen and its eight neighbors differ.
-    const PALETTE: [Color; 9] = [
-        Color::srgb(0.85, 0.20, 0.18), // coral red
-        Color::srgb(0.16, 0.48, 0.88), // blue
-        Color::srgb(0.22, 0.68, 0.34), // green
-        Color::srgb(0.95, 0.72, 0.16), // gold
-        Color::srgb(0.58, 0.30, 0.78), // purple
-        Color::srgb(0.12, 0.72, 0.76), // cyan
-        Color::srgb(0.94, 0.43, 0.14), // orange
-        Color::srgb(0.88, 0.34, 0.60), // pink
-        Color::srgb(0.40, 0.56, 0.24), // olive
-    ];
-    let column = coordinates.x.rem_euclid(3) as usize;
-    let row = coordinates.y.rem_euclid(3) as usize;
-    PALETTE[row * 3 + column]
-}
-
 fn setup_overlay(mut commands: Commands) {
     commands.spawn((
         StatusText,
@@ -320,17 +281,17 @@ fn setup_overlay(mut commands: Commands) {
             ..default()
         },
         TextColor(Color::WHITE),
-        BackgroundColor(Color::srgba(0.05, 0.07, 0.1, 0.85)),
+        BackgroundColor(Color::srgba(0.08, 0.08, 0.08, 0.85)),
         Node {
             position_type: PositionType::Absolute,
-            top: px(12),
-            left: px(12),
+            bottom: percent(12),
+            left: percent(8),
             padding: UiRect::all(px(8)),
             ..default()
         },
     ));
 
-    // Match the reference: four edge strips plus four corner previews around the current screen.
+    // Keep the generous edge/corner hit areas without colored neighbor previews.
     for (direction, node) in [
         (
             ScreenDirection::Up,
@@ -415,15 +376,33 @@ fn setup_overlay(mut commands: Commands) {
     ] {
         let mut node = node;
         node.position_type = PositionType::Absolute;
+        node.align_items = AlignItems::Center;
+        node.justify_content = JustifyContent::Center;
         commands
             .spawn((
-                ScreenPreview(direction),
                 OverlayAction::Travel(direction),
                 combat::WorldUi,
                 Pickable::default(),
                 node,
-                BackgroundColor(screen_color(direction.grid_offset())),
+                BackgroundColor(SCREEN_EDGE_COLOR),
             ))
+            .with_children(|edge| {
+                edge.spawn((
+                    Node {
+                        width: px(12),
+                        height: px(12),
+                        border: UiRect {
+                            top: px(2),
+                            right: px(2),
+                            ..default()
+                        },
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.85, 0.85, 0.85)),
+                    UiTransform::from_rotation(direction.arrow_rotation()),
+                    Pickable::IGNORE,
+                ));
+            })
             .observe(overlay_over)
             .observe(overlay_out)
             .observe(overlay_press);
@@ -437,21 +416,20 @@ fn overlay_over(
 ) {
     pointer.hovered = Some(event.entity);
     if let Ok(mut color) = colors.get_mut(event.entity) {
-        color.0 = Color::srgb(0.2, 0.3, 0.4);
+        color.0 = SCREEN_EDGE_HOVER_COLOR;
     }
 }
 
 fn overlay_out(
     event: On<Pointer<Out>>,
     mut pointer: ResMut<OverlayPointer>,
-    screen: Res<WorldScreen>,
-    mut previews: Query<(&ScreenPreview, &mut BackgroundColor)>,
+    mut colors: Query<&mut BackgroundColor>,
 ) {
     if pointer.hovered == Some(event.entity) {
         pointer.hovered = None;
     }
-    if let Ok((preview, mut color)) = previews.get_mut(event.entity) {
-        color.0 = screen_color(screen.coordinates + preview.0.grid_offset());
+    if let Ok(mut color) = colors.get_mut(event.entity) {
+        color.0 = SCREEN_EDGE_COLOR;
     }
 }
 
@@ -476,7 +454,6 @@ fn handle_overlay_and_travel(
     keyboard: Res<ButtonInput<KeyCode>>,
     viewport: Res<GameViewport>,
     mut inputs: MessageReader<OverlayInput>,
-    animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
     mut player: Single<(&Transform, &mut Player)>,
 ) {
@@ -484,9 +461,6 @@ fn handle_overlay_and_travel(
     for input in inputs.read() {
         let OverlayAction::Travel(direction) = input.0;
         travel = Some(direction);
-    }
-    if animation.0.is_some() {
-        return;
     }
     for (key, direction) in [
         (KeyCode::ArrowUp, ScreenDirection::Up),
@@ -517,8 +491,6 @@ fn handle_overlay_and_travel(
 #[allow(clippy::too_many_arguments)]
 fn finish_travel(
     viewport: Res<GameViewport>,
-    settings: Res<ScreenAnimationSettings>,
-    mut animation: ResMut<ScreenAnimation>,
     mut screen: ResMut<WorldScreen>,
     mut player: Single<(&mut Transform, &mut Player), (Without<Camera3d>, Without<Ground>)>,
     mut camera: Single<&mut Transform, (With<Camera3d>, Without<Ground>, Without<Player>)>,
@@ -535,63 +507,13 @@ fn finish_travel(
             direction,
         );
         let camera_end = camera.translation + center - screen.center;
-        if settings.enabled && settings.duration.is_finite() && settings.duration > 0.0 {
-            animation.0 = Some(ScreenTween {
-                elapsed: 0.0,
-                duration: settings.duration,
-                camera_start: camera.translation,
-                camera_end,
-                ground_start: ground.translation,
-                ground_end: center,
-                player_start: transform.translation,
-                player_end: position,
-            });
-        } else {
-            camera.translation = camera_end;
-            ground.translation = center;
-            transform.translation = position;
-        }
+        camera.translation = camera_end;
+        ground.translation = center;
+        transform.translation = position;
         player.destination = None;
         player.path.clear();
         screen.center = center;
         screen.coordinates += direction.grid_offset();
-    }
-}
-
-#[allow(clippy::type_complexity)]
-fn animate_screen(
-    time: Res<Time>,
-    mut animation: ResMut<ScreenAnimation>,
-    mut player: Single<&mut Transform, (With<Player>, Without<Camera3d>, Without<Ground>)>,
-    mut camera: Single<&mut Transform, (With<Camera3d>, Without<Ground>, Without<Player>)>,
-    mut ground: Single<&mut Transform, (With<Ground>, Without<Player>, Without<Camera3d>)>,
-) {
-    let Some(tween) = animation.0.as_mut() else {
-        return;
-    };
-    tween.elapsed += time.delta_secs();
-    let progress = transition_progress(tween.elapsed, tween.duration);
-    player.translation = tween.player_start.lerp(tween.player_end, progress);
-    camera.translation = tween.camera_start.lerp(tween.camera_end, progress);
-    ground.translation = tween.ground_start.lerp(tween.ground_end, progress);
-    if tween.elapsed >= tween.duration {
-        animation.0 = None;
-    }
-}
-
-fn update_screen_colors(
-    screen: Res<WorldScreen>,
-    ground: Single<&MeshMaterial3d<StandardMaterial>, With<Ground>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut previews: Query<(&ScreenPreview, &mut BackgroundColor)>,
-) {
-    if screen.is_changed()
-        && let Some(mut material) = materials.get_mut(&ground.0)
-    {
-        material.base_color = screen_color(screen.coordinates);
-    }
-    for (preview, mut color) in &mut previews {
-        color.0 = screen_color(screen.coordinates + preview.0.grid_offset());
     }
 }
 
@@ -601,11 +523,11 @@ fn update_status(screen: Res<WorldScreen>, mut text: Single<&mut Text, With<Stat
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn set_destination(
     mouse: Res<ButtonInput<MouseButton>>,
     mut pointer: ResMut<OverlayPointer>,
     enemies: Query<(Entity, &GlobalTransform), With<combat::WorldEnemy>>,
-    animation: Res<ScreenAnimation>,
     screen: Res<WorldScreen>,
     viewport: Res<GameViewport>,
     hud: Res<hud::HudState>,
@@ -616,8 +538,7 @@ fn set_destination(
         pointer.overlay_pressed = false;
         return;
     }
-    if animation.0.is_some()
-        || !mouse.just_pressed(MouseButton::Left)
+    if !mouse.just_pressed(MouseButton::Left)
         || pointer.hovered.is_some()
         || viewport
             .cursor
@@ -969,11 +890,6 @@ mod tests {
             .insert_resource(MovementSettings {
                 speed: DEFAULT_MOVE_SPEED,
             })
-            .insert_resource(ScreenAnimationSettings {
-                enabled: false,
-                duration: 0.18,
-            })
-            .init_resource::<ScreenAnimation>()
             .init_resource::<WorldScreen>()
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()
@@ -1096,59 +1012,57 @@ mod tests {
     }
 
     #[test]
-    fn screen_colors_are_stable_and_all_nine_neighbor_screens_differ() {
-        let center = IVec2::new(-5, 7);
-        assert_eq!(screen_color(center), screen_color(center));
-        let colors: Vec<_> = (-1..=1)
-            .flat_map(|y| (-1..=1).map(move |x| screen_color(center + IVec2::new(x, y))))
-            .collect();
-        for (index, color) in colors.iter().enumerate() {
-            assert!(colors[index + 1..].iter().all(|other| color != other));
+    fn overlay_keeps_all_eight_neutral_exits_with_nonblocking_chevrons() {
+        let mut app = App::new();
+        app.add_systems(Startup, setup_overlay);
+        app.update();
+        let world = app.world_mut();
+        let mut exits = world.query::<(&OverlayAction, &BackgroundColor, &Children)>();
+        let mut offsets = Vec::new();
+        for (OverlayAction::Travel(direction), color, children) in exits.iter(world) {
+            offsets.push(direction.grid_offset());
+            assert_eq!(color.0, SCREEN_EDGE_COLOR);
+            assert_eq!(children.len(), 1);
+            let label = children[0];
+            assert_eq!(
+                world.get::<UiTransform>(label).unwrap().rotation,
+                direction.arrow_rotation()
+            );
+            assert!(world.get::<BorderColor>(label).is_some());
+            assert_eq!(*world.get::<Pickable>(label).unwrap(), Pickable::IGNORE);
         }
+        offsets.sort_by_key(|offset| (offset.x, offset.y));
+        offsets.dedup();
+        assert_eq!(offsets.len(), 8);
+        assert!(!offsets.contains(&IVec2::ZERO));
     }
 
     #[test]
-    fn screen_tween_eases_and_clamps_progress() {
-        assert_eq!(transition_progress(0.0, 0.2), 0.0);
-        assert_eq!(transition_progress(0.1, 0.2), 0.5);
-        assert!(transition_progress(0.02, 0.2) < 0.1);
-        assert_eq!(transition_progress(0.3, 0.2), 1.0);
-    }
-
-    #[test]
-    fn animated_travel_reaches_exact_targets_and_blocks_input() {
-        use bevy::time::TimeUpdateStrategy;
-        use std::time::Duration;
-
-        for duration in [0.1, 0.4] {
+    fn every_screen_exit_reaches_exact_targets_in_one_update_and_accepts_next_input() {
+        for direction in [
+            ScreenDirection::Up,
+            ScreenDirection::Down,
+            ScreenDirection::Left,
+            ScreenDirection::Right,
+            ScreenDirection::UpLeft,
+            ScreenDirection::UpRight,
+            ScreenDirection::DownLeft,
+            ScreenDirection::DownRight,
+        ] {
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)
-                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
-                    0.02,
-                )))
-                .insert_resource(ScreenAnimationSettings {
-                    enabled: true,
-                    duration,
-                })
-                .init_resource::<Assets<StandardMaterial>>()
-                .init_resource::<ScreenAnimation>()
                 .init_resource::<WorldScreen>()
                 .init_resource::<GameViewport>()
                 .init_resource::<ButtonInput<KeyCode>>()
                 .add_message::<OverlayInput>()
-                .add_systems(
-                    Update,
-                    (handle_overlay_and_travel, finish_travel, animate_screen).chain(),
-                );
+                .add_systems(Update, (handle_overlay_and_travel, finish_travel).chain());
             let origin = Vec3::Y * (PLAYER_HEIGHT / 2.0);
             let player = app
                 .world_mut()
                 .spawn((
                     Player {
-                        destination: None,
-                        path: Vec::new(),
-                        travel: Some(ScreenDirection::Right),
-                        approach_enemy: None,
+                        travel: Some(direction),
+                        ..default()
                     },
                     Transform::from_translation(origin),
                 ))
@@ -1161,73 +1075,39 @@ mod tests {
                     Transform::from_translation(camera_origin),
                 ))
                 .id();
-            let material = app
-                .world_mut()
-                .resource_mut::<Assets<StandardMaterial>>()
-                .add(StandardMaterial::default());
-            let ground = app
-                .world_mut()
-                .spawn((
-                    Ground,
-                    Transform::default(),
-                    MeshMaterial3d(material.clone()),
-                ))
-                .id();
-            app.update();
-            assert!(app.world().resource::<ScreenAnimation>().0.is_some());
-            assert_eq!(
-                app.world().get::<Transform>(camera).unwrap().translation,
-                camera_origin
+            let ground = app.world_mut().spawn((Ground, Transform::default())).id();
+            let (center, entry) = screen_transition(
+                origin,
+                Vec3::ZERO,
+                screen_half_extents(Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)),
+                direction,
             );
-            app.world_mut()
-                .write_message(OverlayInput(OverlayAction::Travel(ScreenDirection::Up)));
-            app.world_mut()
-                .resource_mut::<ButtonInput<KeyCode>>()
-                .press(KeyCode::ArrowLeft);
             app.update();
-            app.world_mut()
-                .resource_mut::<ButtonInput<KeyCode>>()
-                .clear();
-            assert!(
-                app.world()
-                    .get::<Player>(player)
-                    .unwrap()
-                    .destination
-                    .is_none()
-            );
-            let center = app.world().resource::<WorldScreen>().center;
-            let halfway_camera = app.world().get::<Transform>(camera).unwrap().translation;
-            assert!(halfway_camera.distance(camera_origin) > 0.0);
-            assert!(halfway_camera.distance(camera_origin) < center.length());
-            for _ in 0..((duration / 0.02).ceil() as usize + 2) {
-                app.update();
-            }
-            assert!(app.world().resource::<ScreenAnimation>().0.is_none());
             assert_eq!(
                 app.world().resource::<WorldScreen>().coordinates,
-                IVec2::new(1, 0)
+                direction.grid_offset()
             );
-            assert!(
-                app.world()
-                    .get::<Transform>(camera)
-                    .unwrap()
-                    .translation
-                    .distance(camera_origin + center)
-                    < 0.0001
+            assert_eq!(
+                app.world().get::<Transform>(camera).unwrap().translation,
+                camera_origin + center
             );
             assert_eq!(
                 app.world().get::<Transform>(ground).unwrap().translation,
                 center
             );
-            let (_, entry) = screen_transition(
-                origin,
-                Vec3::ZERO,
-                screen_half_extents(Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)),
-                ScreenDirection::Right,
-            );
             assert_eq!(
                 app.world().get::<Transform>(player).unwrap().translation,
                 entry
+            );
+            app.world_mut()
+                .write_message(OverlayInput(OverlayAction::Travel(ScreenDirection::Up)));
+            app.update();
+            assert!(
+                app.world()
+                    .get::<Player>(player)
+                    .unwrap()
+                    .destination
+                    .is_some()
             );
         }
     }

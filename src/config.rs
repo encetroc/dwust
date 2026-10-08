@@ -1,9 +1,10 @@
 //! Central game settings. Edit these defaults and restart the game.
 use bevy::prelude::*;
 
-pub const SCREEN_ANIMATION_ENABLED: bool = true;
-/// Seconds; zero disables animation too. Uses smooth ease-in/ease-out.
-pub const SCREEN_ANIMATION_DURATION: f32 = 0.18;
+// Screen changes are immediate; all screens share a calm neutral ground.
+pub const GROUND_COLOR: Color = Color::srgb(0.32, 0.32, 0.32);
+pub const SCREEN_EDGE_COLOR: Color = Color::srgba(0.08, 0.08, 0.08, 0.35);
+pub const SCREEN_EDGE_HOVER_COLOR: Color = Color::srgba(0.08, 0.08, 0.08, 0.65);
 
 pub const WORLD_SIZE: f32 = 128.0;
 pub const PLAYER_RADIUS: f32 = 0.4;
@@ -54,19 +55,4 @@ pub fn configured_speed(value: Option<&str>) -> f32 {
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|speed| speed.is_finite() && (2.0..=60.0).contains(speed))
         .unwrap_or(DEFAULT_MOVE_SPEED)
-}
-
-#[derive(Resource)]
-pub struct ScreenAnimationSettings {
-    pub enabled: bool,
-    pub duration: f32,
-}
-
-impl Default for ScreenAnimationSettings {
-    fn default() -> Self {
-        Self {
-            enabled: SCREEN_ANIMATION_ENABLED,
-            duration: SCREEN_ANIMATION_DURATION,
-        }
-    }
 }
