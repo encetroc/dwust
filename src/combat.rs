@@ -328,6 +328,7 @@ fn enter_combat(
     super::hud::spawn_hud_window(
         &mut commands,
         "HP / MP / AP",
+        KeyCode::KeyS,
         CombatStats,
         Vec2::new(16.0, 192.0),
         Vec2::new(256.0, 80.0),
@@ -337,6 +338,7 @@ fn enter_combat(
     super::hud::spawn_hud_window(
         &mut commands,
         "Spells",
+        KeyCode::KeyP,
         CombatSpells,
         Vec2::new(272.0, 192.0),
         Vec2::new(512.0, 208.0),
@@ -346,6 +348,7 @@ fn enter_combat(
     super::hud::spawn_hud_window(
         &mut commands,
         "Timeline",
+        KeyCode::KeyT,
         CombatTimeline,
         Vec2::new(16.0, 416.0),
         Vec2::new(768.0, 64.0),
@@ -781,10 +784,7 @@ fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Q
     let hp = player.map_or(0, |unit| unit.hp.max(0));
     let mp = player.map_or(0, |unit| unit.mp);
     let ap = player.map_or(0, |unit| unit.ap);
-    let physical = player.map_or(0, |unit| unit.physical_damage);
-    let magical = player.map_or(0, |unit| unit.magical_damage);
-    stats.0 =
-        format!("HP {hp}    MP {mp}    AP {ap}\nPhysical +{physical}%    Magical +{magical}%");
+    stats.0 = format!("HP {hp}    MP {mp}    AP {ap}");
 }
 
 fn update_combat_spells(

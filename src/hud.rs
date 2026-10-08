@@ -14,6 +14,8 @@ const STATS_KEY: &str = "Stats";
 #[derive(Resource, Default, Serialize, Deserialize)]
 struct HudLayout {
     positions: HashMap<String, [f32; 2]>,
+    #[serde(default)]
+    visibility: HashMap<String, bool>,
 }
 
 impl HudLayout {
@@ -21,6 +23,18 @@ impl HudLayout {
         self.positions
             .get(key)
             .map(|position| Vec2::from_array(*position))
+    }
+
+    fn visible(&self, key: &str) -> bool {
+        self.visibility.get(key).copied().unwrap_or(true)
+    }
+
+    fn set_visible(&mut self, key: &str, visible: bool) -> bool {
+        if self.visibility.get(key) == Some(&visible) {
+            return false;
+        }
+        self.visibility.insert(key.to_owned(), visible);
+        true
     }
 
     fn set_position(&mut self, key: &str, position: Vec2) -> bool {
@@ -41,12 +55,13 @@ pub(super) struct HudState {
     pub(super) position: Vec2,
     pub(super) visible: bool,
     dragging: bool,
+    suppress_world_click: bool,
     drag_offset: Vec2,
 }
 
 impl HudState {
     pub(super) fn contains_cursor(&self, cursor: Vec2) -> bool {
-        self.visible
+        (self.visible || self.suppress_world_click)
             && cursor.x >= self.position.x
             && cursor.x <= self.position.x + PANEL_WIDTH
             && cursor.y >= self.position.y
@@ -60,6 +75,7 @@ impl Default for HudState {
             position: Vec2::splat(SNAP),
             visible: true,
             dragging: false,
+            suppress_world_click: false,
             drag_offset: Vec2::ZERO,
         }
     }
@@ -79,6 +95,7 @@ pub(super) struct HudWindow {
     key: String,
     position: Vec2,
     size: Vec2,
+    hotkey: KeyCode,
     dragging: bool,
     drag_offset: Vec2,
 }
@@ -102,6 +119,7 @@ impl Plugin for HudPlugin {
                     restore_hud_window_positions,
                     interact_with_hud,
                     interact_with_hud_windows,
+                    toggle_hud_windows,
                     sync_hud,
                     save_hud_layout,
                 )
@@ -113,6 +131,7 @@ impl Plugin for HudPlugin {
 pub(super) fn spawn_hud_window<C: Component>(
     commands: &mut Commands,
     title: &str,
+    hotkey: KeyCode,
     content_marker: C,
     position: Vec2,
     size: Vec2,
@@ -124,6 +143,7 @@ pub(super) fn spawn_hud_window<C: Component>(
             DespawnOnExit(crate::combat::GameMode::Combat),
             HudWindow {
                 key: title.to_owned(),
+                hotkey,
                 position,
                 size,
                 dragging: false,
@@ -142,6 +162,7 @@ pub(super) fn spawn_hud_window<C: Component>(
             BackgroundColor(Color::srgba(0.055, 0.075, 0.11, 0.96)),
             BorderColor::all(Color::srgb(0.30, 0.44, 0.58)),
             ZIndex(20),
+            Visibility::Visible,
             Pickable::IGNORE,
         ))
         .id();
@@ -226,6 +247,7 @@ fn load_hud_layout(mut state: ResMut<HudState>, mut layout: ResMut<HudLayout>) {
     if let Some(position) = layout.position(STATS_KEY) {
         state.position = position;
     }
+    state.visible = layout.visible(STATS_KEY);
 }
 
 fn setup_hud(mut commands: Commands, state: Res<HudState>) {
@@ -378,8 +400,12 @@ fn stat_row(parent: &mut ChildSpawnerCommands, label: &str, value: &str, color: 
         });
 }
 
-fn toggle_stats(keyboard: Res<ButtonInput<KeyCode>>, mut state: ResMut<HudState>) {
-    if keyboard.just_pressed(KeyCode::KeyH) {
+fn toggle_stats(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mode: Res<State<crate::combat::GameMode>>,
+    mut state: ResMut<HudState>,
+) {
+    if *mode.get() == crate::combat::GameMode::World && keyboard.just_pressed(KeyCode::KeyS) {
         state.visible = !state.visible;
         state.dragging = false;
     }
@@ -391,11 +417,13 @@ fn interact_with_hud(
     mut state: ResMut<HudState>,
     close_buttons: Query<&Interaction, (Changed<Interaction>, With<CloseStats>)>,
 ) {
+    state.suppress_world_click = false;
     if close_buttons
         .iter()
         .any(|interaction| *interaction == Interaction::Pressed)
     {
         state.visible = false;
+        state.suppress_world_click = true;
         state.dragging = false;
     }
     let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
@@ -462,11 +490,31 @@ fn interact_with_hud_windows(
     }
 }
 
+fn toggle_hud_windows(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut windows: Query<(&HudWindow, &mut Visibility)>,
+) {
+    for (window, mut visibility) in &mut windows {
+        if keyboard.just_pressed(window.hotkey) {
+            visibility.set_if_neq(if *visibility == Visibility::Visible {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            });
+        }
+    }
+}
+
 fn restore_hud_window_positions(
     layout: Res<HudLayout>,
-    mut windows: Query<(&mut HudWindow, &mut Node), Added<HudWindow>>,
+    mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Added<HudWindow>>,
 ) {
-    for (mut window, mut node) in &mut windows {
+    for (mut window, mut node, mut visibility) in &mut windows {
+        visibility.set_if_neq(if layout.visible(&window.key) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        });
         if let Some(position) = layout.position(&window.key) {
             window.position = position;
             node.left = px(position.x.max(0.0));
@@ -477,15 +525,17 @@ fn restore_hud_window_positions(
 
 fn save_hud_layout(
     state: Res<HudState>,
-    windows: Query<&HudWindow>,
+    windows: Query<(&HudWindow, &Visibility)>,
     mut layout: ResMut<HudLayout>,
 ) {
-    if state.dragging || windows.iter().any(|window| window.dragging) {
+    if state.dragging || windows.iter().any(|(window, _)| window.dragging) {
         return;
     }
     let mut changed = layout.set_position(STATS_KEY, state.position);
-    for window in &windows {
+    changed |= layout.set_visible(STATS_KEY, state.visible);
+    for (window, visibility) in &windows {
         changed |= layout.set_position(&window.key, window.position);
+        changed |= layout.set_visible(&window.key, *visibility == Visibility::Visible);
     }
     if changed {
         match serde_json::to_string_pretty(&*layout)
@@ -536,5 +586,30 @@ mod tests {
         let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.position(STATS_KEY), Some(Vec2::new(48.0, 64.0)));
+        assert!(decoded.visible(STATS_KEY));
+    }
+
+    #[test]
+    fn closing_stats_still_consumes_the_close_click_for_world_movement() {
+        let mut state = HudState::default();
+        state.visible = false;
+        state.suppress_world_click = true;
+
+        assert!(state.contains_cursor(state.position + Vec2::new(8.0, 8.0)));
+        assert!(!state.contains_cursor(state.position + Vec2::new(PANEL_WIDTH + 1.0, 8.0)));
+    }
+
+    #[test]
+    fn hud_layout_round_trips_closed_visibility_and_loads_legacy_layouts() {
+        let mut layout = HudLayout::default();
+        assert!(layout.set_visible(STATS_KEY, false));
+        assert!(!layout.set_visible(STATS_KEY, false));
+
+        let encoded = serde_json::to_string(&layout).unwrap();
+        let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
+        assert!(!decoded.visible(STATS_KEY));
+
+        let legacy: HudLayout = serde_json::from_str(r#"{"positions":{}}"#).unwrap();
+        assert!(legacy.visible(STATS_KEY));
     }
 }
