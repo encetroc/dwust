@@ -1107,7 +1107,8 @@ fn update_combat_visuals(
         .then(|| area_cells(&spell.area, center))
     });
     let mut path = Vec::new();
-    if player_turn
+    if !preparation.0
+        && player_turn
         && session.spell_selected.is_none()
         && let (Some(start), Some(end)) = (player_cell, hovered_cell)
     {
