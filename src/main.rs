@@ -8,6 +8,7 @@ mod config;
 #[cfg(test)]
 mod headless;
 mod hud;
+mod hud_layout;
 use config::*;
 
 #[cfg(test)]

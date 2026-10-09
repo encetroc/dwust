@@ -115,6 +115,9 @@ struct MovementRangeTile(IVec2);
 #[derive(Component)]
 struct CombatPreparation;
 
+#[derive(Component)]
+struct CombatPhasePanel;
+
 #[derive(Resource, Default)]
 struct PreparationPhase(bool);
 
@@ -231,6 +234,16 @@ struct Session {
 #[derive(Component)]
 struct CombatStats;
 
+#[derive(Component, Clone, Copy)]
+struct CombatStatCell(CombatStat);
+
+#[derive(Clone, Copy)]
+enum CombatStat {
+    Hp,
+    Mp,
+    Ap,
+}
+
 #[derive(Component)]
 struct CombatSpells;
 
@@ -241,7 +254,10 @@ struct AbilityIcon(usize);
 struct CombatTimeline;
 
 #[derive(Component)]
-struct TimelineEntryLabel(Entity);
+struct TimelineEntryName(Entity);
+
+#[derive(Component)]
+struct TimelineEntryHealth(Entity);
 
 #[derive(Component)]
 struct TimelineHealthBar(Entity);
@@ -479,166 +495,193 @@ fn enter_combat(
             Color::srgb(0.9, 0.06, 0.04),
         ));
     }
-    super::hud::spawn_hud_window(
+    let phase_grid = super::hud_layout::HudGrid::content_sized(
+        1,
+        1,
+        0.0,
+        0.0,
+        UiRect::new(px(8), px(28), px(8), px(8)),
+    );
+    let (_, phase_content) = super::hud::spawn_hud_window(
         &mut commands,
         "Phase",
-        KeyCode::KeyD,
-        CombatPreparation,
+        Some(KeyCode::KeyD),
+        CombatPhasePanel,
         Vec2::new(352.0, 624.0),
-        Vec2::new(224.0, 44.0),
-        "Preparation Phase",
-        16.0,
+        phase_grid,
+        true,
     );
-    super::hud::spawn_hud_window(
+    commands.entity(phase_content).with_children(|grid| {
+        grid.spawn((
+            CombatPreparation,
+            Text::new("Preparation Phase"),
+            TextFont {
+                font_size: FontSize::Px(16.0),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+    });
+
+    let stats_grid = super::hud_layout::HudGrid::content_sized(
+        3,
+        1,
+        12.0,
+        0.0,
+        UiRect::new(px(8), px(28), px(8), px(8)),
+    );
+    let (_, stats_content) = super::hud::spawn_hud_window(
         &mut commands,
         "HP / MP / AP",
-        KeyCode::KeyS,
+        Some(KeyCode::KeyS),
         CombatStats,
         Vec2::new(16.0, 192.0),
-        Vec2::new(320.0, 44.0),
-        "",
-        16.0,
+        stats_grid,
+        true,
     );
-    let abilities_window = super::hud::spawn_hud_window(
+    commands.entity(stats_content).with_children(|grid| {
+        for stat in [CombatStat::Hp, CombatStat::Mp, CombatStat::Ap] {
+            grid.spawn((
+                CombatStatCell(stat),
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        }
+    });
+
+    let abilities_grid = super::hud_layout::HudGrid::fixed_cells(
+        10,
+        2,
+        36.0,
+        8.0,
+        UiRect::new(px(8), px(28), px(8), px(8)),
+    );
+    let (_, abilities_content) = super::hud::spawn_hud_window(
         &mut commands,
         "Abilities",
-        KeyCode::KeyP,
+        Some(KeyCode::KeyP),
         CombatSpells,
         Vec2::new(352.0, 192.0),
-        Vec2::new(512.0, 112.0),
-        "",
-        16.0,
+        abilities_grid,
+        true,
     );
-    commands.entity(abilities_window).with_children(|window| {
-        window
-            .spawn(Node {
-                width: percent(100),
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(8),
-                padding: UiRect::new(px(8), px(28), px(8), px(8)),
-                ..default()
-            })
-            .with_children(|row| {
-                let mut used_letters = Vec::new();
-                for (index, spell) in book.0.iter().enumerate() {
-                    let letter = spell
-                        .name
-                        .chars()
-                        .find(|character| {
-                            character.is_ascii_alphabetic()
-                                && !used_letters.contains(&character.to_ascii_uppercase())
-                        })
-                        .unwrap_or('?')
-                        .to_ascii_uppercase();
-                    used_letters.push(letter);
-                    let color = ability_color(spell);
-                    row.spawn((
-                        AbilityIcon(index),
-                        Button,
-                        Node {
-                            width: px(36),
-                            height: px(36),
-                            flex_shrink: 0.0,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(px(2)),
-                            ..default()
-                        },
-                        BackgroundColor(color),
-                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-                    ))
-                    .with_children(|icon| {
-                        icon.spawn((
-                            Text::new(letter.to_string()),
-                            TextFont {
-                                font_size: FontSize::Px(18.0),
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
-                }
+    commands.entity(abilities_content).with_children(|grid| {
+        let mut used_letters = Vec::new();
+        for (index, spell) in book.0.iter().enumerate() {
+            let letter = spell
+                .name
+                .chars()
+                .find(|character| {
+                    character.is_ascii_alphabetic()
+                        && !used_letters.contains(&character.to_ascii_uppercase())
+                })
+                .unwrap_or('?')
+                .to_ascii_uppercase();
+            used_letters.push(letter);
+            let color = ability_color(spell);
+            grid.spawn((
+                AbilityIcon(index),
+                Button,
+                Node {
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(2)),
+                    ..default()
+                },
+                BackgroundColor(color),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+            ))
+            .with_children(|icon| {
+                icon.spawn((
+                    Text::new(letter.to_string()),
+                    TextFont {
+                        font_size: FontSize::Px(18.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
             });
+        }
     });
-    let timeline_window = super::hud::spawn_hud_window(
+
+    let timeline_grid = super::hud_layout::HudGrid::content_sized(
+        1,
+        turn_order.entities.len(),
+        0.0,
+        4.0,
+        UiRect::new(px(8), px(8), px(0), px(2)),
+    );
+    let (_, timeline_content) = super::hud::spawn_hud_window(
         &mut commands,
         "Timeline",
-        KeyCode::KeyT,
+        Some(KeyCode::KeyT),
         CombatTimeline,
         Vec2::new(16.0, 416.0),
-        Vec2::new(224.0, 144.0),
-        "",
-        16.0,
+        timeline_grid,
+        true,
     );
-    commands.entity(timeline_window).with_children(|window| {
-        window
-            .spawn(Node {
-                width: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(2),
-                padding: UiRect::new(px(8), px(8), px(0), px(2)),
-                ..default()
-            })
-            .with_children(|entries| {
-                for unit in turn_order.entities.iter().copied() {
-                    entries
+    commands.entity(timeline_content).with_children(|entries| {
+        for unit in turn_order.entities.iter().copied() {
+            let item_grid = super::hud_layout::HudGrid::from_tracks(
+                vec![GridTrack::flex(1.0), GridTrack::auto()],
+                vec![GridTrack::auto(), GridTrack::px(5.0)],
+                8.0,
+                2.0,
+                UiRect::axes(px(6.0), px(2.0)),
+            );
+            entries
+                .spawn((
+                    item_grid.node(),
+                    BackgroundColor(Color::srgba(0.15, 0.19, 0.24, 0.9)),
+                    Pickable::IGNORE,
+                ))
+                .with_children(|entry| {
+                    entry.spawn((
+                        TimelineEntryName(unit),
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(12.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                    entry.spawn((
+                        TimelineEntryHealth(unit),
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(12.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                    entry
                         .spawn((
                             Node {
-                                width: percent(100),
-                                height: px(28),
-                                flex_shrink: 0.0,
-                                flex_direction: FlexDirection::Column,
-                                justify_content: JustifyContent::Center,
-                                row_gap: px(2),
-                                padding: UiRect::axes(px(6), px(2)),
+                                grid_column: GridPlacement::span(2),
+                                height: px(5.0),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.15, 0.19, 0.24, 0.9)),
+                            BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
                             Pickable::IGNORE,
                         ))
-                        .with_children(|entry| {
-                            entry.spawn((
-                                TimelineEntryLabel(unit),
-                                Text::new(""),
-                                TextFont {
-                                    font_size: FontSize::Px(12.0),
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                                TextLayout::new(Justify::Left, LineBreak::WordBoundary),
+                        .with_children(|track| {
+                            track.spawn((
+                                TimelineHealthBar(unit),
                                 Node {
                                     width: percent(100),
-                                    min_width: px(0),
+                                    height: percent(100),
                                     ..default()
                                 },
+                                BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
+                                Pickable::IGNORE,
                             ));
-                            entry
-                                .spawn((
-                                    Node {
-                                        width: percent(100),
-                                        height: px(5),
-                                        flex_shrink: 0.0,
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
-                                    Pickable::IGNORE,
-                                ))
-                                .with_children(|track| {
-                                    track.spawn((
-                                        TimelineHealthBar(unit),
-                                        Node {
-                                            width: percent(100),
-                                            height: percent(100),
-                                            ..default()
-                                        },
-                                        BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
-                                        Pickable::IGNORE,
-                                    ));
-                                });
                         });
-                }
-            });
+                });
+        }
     });
 }
 
@@ -1233,13 +1276,19 @@ fn update_combat_preparation(
     };
 }
 
-fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Query<&Unit>) {
+fn update_combat_stats(mut stats: Query<(&mut Text, &CombatStatCell)>, units: Query<&Unit>) {
     let player = units.iter().find(|unit| unit.team == Team::Player);
-    let current_hp = player.map_or(0, |unit| unit.hp.max(0));
-    let total_hp = player.map_or(0, |unit| unit.max_hp);
-    let mp = player.map_or(0, |unit| unit.mp);
-    let ap = player.map_or(0, |unit| unit.ap);
-    stats.0 = format!("HP {current_hp}/{total_hp}    MP {mp}    AP {ap}");
+    for (mut text, CombatStatCell(stat)) in &mut stats {
+        text.0 = match stat {
+            CombatStat::Hp => format!(
+                "HP {}/{}",
+                player.map_or(0, |unit| unit.hp.max(0)),
+                player.map_or(0, |unit| unit.max_hp)
+            ),
+            CombatStat::Mp => format!("MP {}", player.map_or(0, |unit| unit.mp)),
+            CombatStat::Ap => format!("AP {}", player.map_or(0, |unit| unit.ap)),
+        };
+    }
 }
 
 fn ability_color(spell: &Spell) -> Color {
@@ -1267,7 +1316,8 @@ fn update_combat_spells(session: Res<Session>, mut icons: Query<(&mut BorderColo
 fn update_combat_timeline(
     turn_order: Res<TurnOrder>,
     units: Query<&Unit>,
-    mut labels: Query<(&mut Text, &TimelineEntryLabel)>,
+    mut names: Query<(&mut Text, &TimelineEntryName), Without<TimelineEntryHealth>>,
+    mut health_numbers: Query<(&mut Text, &TimelineEntryHealth), Without<TimelineEntryName>>,
     mut health_bars: Query<(&mut Node, &TimelineHealthBar)>,
 ) {
     for (mut node, TimelineHealthBar(entity)) in &mut health_bars {
@@ -1284,7 +1334,7 @@ fn update_combat_timeline(
         node.width = percent(ratio * 100.0);
     }
 
-    for (mut text, TimelineEntryLabel(entity)) in &mut labels {
+    for (mut text, TimelineEntryName(entity)) in &mut names {
         let Ok(unit) = units.get(*entity) else {
             text.0 = "Unavailable".to_owned();
             continue;
@@ -1303,8 +1353,6 @@ fn update_combat_timeline(
         } else {
             "Entity"
         };
-        let current_hp = unit.hp.clamp(0, unit.max_hp.max(0));
-        let max_hp = unit.max_hp.max(0);
         let status = if unit.team == Team::Enemy && unit.hp <= 0 {
             " (DEAD)"
         } else {
@@ -1315,7 +1363,17 @@ fn update_combat_timeline(
         } else {
             ""
         };
-        text.0 = format!("{active}{label}{status} {current_hp}/{max_hp}");
+        text.0 = format!("{active}{label}{status}");
+    }
+
+    for (mut text, TimelineEntryHealth(entity)) in &mut health_numbers {
+        let Ok(unit) = units.get(*entity) else {
+            text.0 = "—".to_owned();
+            continue;
+        };
+        let current_hp = unit.hp.clamp(0, unit.max_hp.max(0));
+        let max_hp = unit.max_hp.max(0);
+        text.0 = format!("{current_hp}/{max_hp}");
     }
 }
 

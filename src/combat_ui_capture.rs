@@ -103,6 +103,7 @@ fn capture_combat_ui(
     mode: Res<State<combat::GameMode>>,
     windows: Query<&Window>,
     modules: Query<&Node, With<HudWindow>>,
+    nodes: Query<&Node>,
 ) {
     assert!(windows.is_empty(), "headless mode created a Window entity");
     if *mode.get() != combat::GameMode::Combat || state.pending {
@@ -112,10 +113,45 @@ fn capture_combat_ui(
     if state.elapsed < 60 {
         return;
     }
+    let module_nodes = modules.iter().collect::<Vec<_>>();
     assert_eq!(
-        modules.iter().count(),
+        module_nodes.len(),
         5,
         "expected the four combat modules and the shared stats panel"
+    );
+    for node in module_nodes {
+        for edge in [node.left, node.top, node.width, node.height] {
+            let Val::Px(value) = edge else {
+                panic!("HUD panel edges and dimensions must use measured pixel values");
+            };
+            assert_eq!(value % 16.0, 0.0, "HUD panel edge {value} is off-grid");
+        }
+        let (Val::Px(width), Val::Px(height)) = (node.width, node.height) else {
+            unreachable!("validated above");
+        };
+        assert!(width <= WINDOW_WIDTH as f32 && height <= WINDOW_HEIGHT as f32);
+    }
+
+    let grid_shapes = nodes
+        .iter()
+        .filter(|node| node.display == Display::Grid)
+        .map(|node| {
+            (
+                node.grid_template_columns.len(),
+                node.grid_template_rows.len(),
+            )
+        })
+        .collect::<Vec<_>>();
+    for expected in [(10, 2), (1, 3), (2, 5), (3, 1), (1, 1)] {
+        assert!(
+            grid_shapes.contains(&expected),
+            "HUD is missing its {expected:?} content grid: {grid_shapes:?}"
+        );
+    }
+    assert_eq!(
+        grid_shapes.iter().filter(|shape| **shape == (2, 2)).count(),
+        3,
+        "each of the three timeline items must use a nested 2x2 grid"
     );
     state.pending = true;
     let output = state.output.clone();
@@ -134,7 +170,7 @@ fn capture_combat_ui(
                 .expect("save combat UI screenshot");
             std::fs::write(
                 output.join("result.txt"),
-                "PASS: real combat scene, headless render target, 4 combat UI modules including deployment status, 1280x720 screenshot\n",
+                "PASS: real combat scene, headless render target, HUD module sizes and grid compositions verified, 1280x720 screenshot\n",
             )
             .expect("save verification result");
             println!("PASS: captured real combat UI with deployment status at 1280x720");

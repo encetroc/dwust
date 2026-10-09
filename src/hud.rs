@@ -1,11 +1,11 @@
-use crate::config::{WINDOW_HEIGHT, WINDOW_WIDTH};
-use bevy::prelude::*;
+use crate::{
+    config::{WINDOW_HEIGHT, WINDOW_WIDTH},
+    hud_layout::{self, HudGrid, SNAP},
+};
+use bevy::{prelude::*, ui::UiSystems};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub(super) const SNAP: f32 = 16.0;
-const PANEL_WIDTH: f32 = 256.0;
-const PANEL_HEIGHT: f32 = 160.0;
 const HUD_LAYOUT_PATH: &str = "hud_layout.json";
 const STATS_KEY: &str = "Stats";
 
@@ -68,6 +68,12 @@ impl HudState {
 struct StatsPanel;
 
 #[derive(Component)]
+struct HudWindowContent(Entity);
+
+#[derive(Component)]
+struct HudGridContent;
+
+#[derive(Component)]
 struct HudContextMenu;
 
 #[derive(Component)]
@@ -80,24 +86,13 @@ pub(super) struct HudWindow {
     size: Vec2,
     hotkey: Option<KeyCode>,
     visible: bool,
+    measured: bool,
     dragging: bool,
     drag_offset: Vec2,
 }
 
 #[derive(Component)]
 struct SnapGrid;
-
-fn snap_hud_size(size: Vec2) -> Vec2 {
-    (size.max(Vec2::splat(SNAP)) / SNAP).ceil() * SNAP
-}
-
-fn constrain_hud_position(position: Vec2, size: Vec2) -> Vec2 {
-    let max_position = Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) - size;
-    (position / SNAP)
-        .round()
-        .clamp(Vec2::ZERO, (max_position / SNAP).floor())
-        * SNAP
-}
 
 pub(super) struct HudPlugin;
 
@@ -117,6 +112,10 @@ impl Plugin for HudPlugin {
                     save_hud_layout,
                 )
                     .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                measure_hud_windows.in_set(UiSystems::PostLayout),
             );
     }
 }
@@ -124,34 +123,36 @@ impl Plugin for HudPlugin {
 pub(super) fn spawn_hud_window<C: Component>(
     commands: &mut Commands,
     title: &str,
-    hotkey: KeyCode,
+    hotkey: Option<KeyCode>,
     content_marker: C,
     position: Vec2,
-    size: Vec2,
-    content: &str,
-    font_size: f32,
-) -> Entity {
-    let size = snap_hud_size(size);
-    let position = constrain_hud_position(position, size);
+    grid: HudGrid,
+    despawn_on_combat: bool,
+) -> (Entity, Entity) {
+    let position = hud_layout::constrain_panel_position(position, Vec2::splat(SNAP));
+    let content = commands.spawn((HudGridContent, grid.node())).id();
     let entity = commands
         .spawn((
-            DespawnOnExit(crate::combat::GameMode::Combat),
+            content_marker,
             HudWindow {
                 key: title.to_owned(),
-                hotkey: Some(hotkey),
+                hotkey,
                 position,
-                size,
+                size: Vec2::splat(SNAP),
                 visible: true,
+                measured: false,
                 dragging: false,
                 drag_offset: Vec2::ZERO,
             },
+            HudWindowContent(content),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(position.x),
                 top: px(position.y),
-                width: px(size.x),
-                height: px(size.y),
+                width: auto(),
+                height: auto(),
                 flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Start,
                 border: UiRect::all(px(1)),
                 ..default()
             },
@@ -162,27 +163,35 @@ pub(super) fn spawn_hud_window<C: Component>(
             Pickable::IGNORE,
         ))
         .id();
-    commands.entity(entity).with_children(|window| {
-        window.spawn((
-            content_marker,
-            Text::new(content.to_owned()),
-            TextFont {
-                font_size: FontSize::Px(font_size),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-            TextLayout::new(Justify::Left, LineBreak::WordBoundary),
-            Node {
-                width: percent(100),
-                min_width: px(0),
-                flex_grow: if content.is_empty() { 0.0 } else { 1.0 },
-                padding: UiRect::new(px(8), px(28), px(8), px(8)),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        ));
-    });
-    entity
+    commands.entity(entity).add_child(content);
+    if despawn_on_combat {
+        commands
+            .entity(entity)
+            .insert(DespawnOnExit(crate::combat::GameMode::Combat));
+    }
+    (entity, content)
+}
+
+fn measure_hud_windows(
+    mut windows: Query<(&mut HudWindow, &HudWindowContent, &mut Node)>,
+    content_nodes: Query<&ComputedNode>,
+) {
+    for (mut window, HudWindowContent(content), mut node) in &mut windows {
+        let Ok(computed) = content_nodes.get(*content) else {
+            continue;
+        };
+        let content_size = computed.size() * computed.inverse_scale_factor;
+        let size = hud_layout::snap_panel_size(content_size);
+        if size != window.size {
+            window.size = size;
+            window.position = hud_layout::constrain_panel_position(window.position, size);
+            node.left = px(window.position.x);
+            node.top = px(window.position.y);
+            node.width = px(size.x);
+            node.height = px(size.y);
+        }
+        window.measured = true;
+    }
 }
 
 fn load_hud_layout(mut layout: ResMut<HudLayout>) {
@@ -199,61 +208,33 @@ fn load_hud_layout(mut layout: ResMut<HudLayout>) {
 }
 
 fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
-    let position = constrain_hud_position(
+    let grid = HudGrid::content_sized(2, 5, 20.0, 9.0, UiRect::all(px(12.0)));
+    let (_, content) = spawn_hud_window(
+        &mut commands,
+        STATS_KEY,
+        Some(KeyCode::KeyS),
+        StatsPanel,
         layout.position(STATS_KEY).unwrap_or(Vec2::splat(SNAP)),
-        Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
+        grid,
+        false,
     );
-    let visible = layout.visible(STATS_KEY);
-    commands
-        .spawn((
-            StatsPanel,
-            HudWindow {
-                key: STATS_KEY.to_owned(),
-                position,
-                size: Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
-                hotkey: Some(KeyCode::KeyS),
-                visible,
-                dragging: false,
-                drag_offset: Vec2::ZERO,
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(position.x),
-                top: px(position.y),
-                width: px(PANEL_WIDTH),
-                height: px(PANEL_HEIGHT),
-                flex_direction: FlexDirection::Column,
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.055, 0.075, 0.11, 0.96)),
-            BorderColor::all(Color::srgb(0.30, 0.44, 0.58)),
-            ZIndex(20),
-            Visibility::Visible,
-            Pickable::IGNORE,
-        ))
-        .with_children(|panel| {
-            panel
-                .spawn(Node {
-                    padding: UiRect::all(px(12)),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(9),
-                    ..default()
-                })
-                .with_children(|body| {
-                    stat_row(body, "Total HP", "100", Color::srgb(0.36, 0.84, 0.48));
-                    stat_row(
-                        body,
-                        "Physical Damage",
-                        "12%",
-                        Color::srgb(0.95, 0.68, 0.30),
-                    );
-                    stat_row(body, "Magical Damage", "8%", Color::srgb(0.43, 0.68, 0.98));
-                    stat_row(body, "Physical Defense", "0", Color::srgb(0.72, 0.76, 0.82));
-                    stat_row(body, "Magical Defense", "0", Color::srgb(0.72, 0.76, 0.82));
-                });
-        });
-
+    commands.entity(content).with_children(|body| {
+        stat_cell(body, "Total HP", Color::srgb(0.36, 0.84, 0.48), 14.0);
+        stat_cell(body, "100", Color::WHITE, 16.0);
+        stat_cell(body, "Physical Damage", Color::srgb(0.95, 0.68, 0.30), 14.0);
+        stat_cell(body, "12%", Color::WHITE, 16.0);
+        stat_cell(body, "Magical Damage", Color::srgb(0.43, 0.68, 0.98), 14.0);
+        stat_cell(body, "8%", Color::WHITE, 16.0);
+        stat_cell(
+            body,
+            "Physical Defense",
+            Color::srgb(0.72, 0.76, 0.82),
+            14.0,
+        );
+        stat_cell(body, "0", Color::WHITE, 16.0);
+        stat_cell(body, "Magical Defense", Color::srgb(0.72, 0.76, 0.82), 14.0);
+        stat_cell(body, "0", Color::WHITE, 16.0);
+    });
     commands
         .spawn((
             SnapGrid,
@@ -297,31 +278,16 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         });
 }
 
-fn stat_row(parent: &mut ChildSpawnerCommands, label: &str, value: &str, color: Color) {
-    parent
-        .spawn((Node {
-            justify_content: JustifyContent::SpaceBetween,
-            align_items: AlignItems::Center,
+fn stat_cell(parent: &mut ChildSpawnerCommands, text: &str, color: Color, font_size: f32) {
+    parent.spawn((
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(font_size),
             ..default()
-        },))
-        .with_children(|row| {
-            row.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(color),
-            ));
-            row.spawn((
-                Text::new(value),
-                TextFont {
-                    font_size: FontSize::Px(16.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-        });
+        },
+        TextColor(color),
+        TextLayout::new(Justify::Left, LineBreak::WordBoundary),
+    ));
 }
 
 fn interact_with_hud_windows(
@@ -356,8 +322,10 @@ fn interact_with_hud_windows(
             }
         }
         if hud_window.dragging && mouse.pressed(MouseButton::Left) {
-            hud_window.position =
-                constrain_hud_position(cursor - hud_window.drag_offset, hud_window.size);
+            hud_window.position = hud_layout::constrain_panel_position(
+                cursor - hud_window.drag_offset,
+                hud_window.size,
+            );
             node.left = px(hud_window.position.x);
             node.top = px(hud_window.position.y);
         }
@@ -495,7 +463,7 @@ fn restore_hud_window_positions(
             Visibility::Hidden
         });
         if let Some(position) = layout.position(&window.key) {
-            window.position = constrain_hud_position(position, window.size);
+            window.position = hud_layout::constrain_panel_position(position, window.size);
             node.left = px(window.position.x);
             node.top = px(window.position.y);
         }
@@ -540,6 +508,7 @@ fn sync_hud(
     let mut dragging = false;
     for (window, mut node, mut visibility, stats_panel) in &mut windows {
         let active = window.visible
+            && window.measured
             && (stats_panel.is_none() || *mode.get() == crate::combat::GameMode::World);
         visibility.set_if_neq(if active {
             Visibility::Visible
@@ -568,19 +537,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hud_modules_keep_every_edge_on_the_grid_and_inside_the_viewport() {
-        let size = snap_hud_size(Vec2::new(320.0, 44.0));
-        let position = constrain_hud_position(Vec2::new(f32::MAX, f32::MAX), size);
-
-        assert_eq!(size, Vec2::new(320.0, 48.0));
-        assert_eq!(position % SNAP, Vec2::ZERO);
-        assert_eq!(
-            position + size,
-            Vec2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)
-        );
-    }
-
-    #[test]
     fn hud_layout_round_trips_named_positions() {
         let mut layout = HudLayout::default();
         assert!(layout.set_position(STATS_KEY, Vec2::new(48.0, 64.0)));
@@ -598,7 +554,7 @@ mod tests {
         let mut state = HudState::default();
         state.cursor_bounds.push(Rect::from_corners(
             Vec2::new(32.0, 48.0),
-            Vec2::new(32.0 + PANEL_WIDTH, 48.0 + PANEL_HEIGHT),
+            Vec2::new(160.0, 128.0),
         ));
 
         assert!(state.contains_cursor(Vec2::new(40.0, 56.0)));
