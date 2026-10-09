@@ -175,7 +175,7 @@ pub(super) fn spawn_hud_window<C: Component>(
             Node {
                 width: percent(100),
                 min_width: px(0),
-                flex_grow: 1.0,
+                flex_grow: if content.is_empty() { 0.0 } else { 1.0 },
                 padding: UiRect::new(px(8), px(28), px(8), px(8)),
                 align_items: AlignItems::Center,
                 ..default()
@@ -327,6 +327,7 @@ fn stat_row(parent: &mut ChildSpawnerCommands, label: &str, value: &str, color: 
 fn interact_with_hud_windows(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+    buttons: Query<&Interaction, With<Button>>,
     mut windows: Query<(&mut HudWindow, &mut Node, &Visibility)>,
 ) {
     let cursor = window.and_then(|window| window.cursor_position());
@@ -339,7 +340,11 @@ fn interact_with_hud_windows(
             continue;
         }
         let Some(cursor) = cursor else { continue };
-        if mouse.just_pressed(MouseButton::Left) {
+        if mouse.just_pressed(MouseButton::Left)
+            && !buttons
+                .iter()
+                .any(|interaction| *interaction == Interaction::Pressed)
+        {
             let local = cursor - hud_window.position;
             if local.x >= 0.0
                 && local.x <= hud_window.size.x

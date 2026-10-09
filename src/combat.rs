@@ -235,7 +235,13 @@ struct CombatStats;
 struct CombatSpells;
 
 #[derive(Component)]
+struct AbilityIcon(usize);
+
+#[derive(Component)]
 struct CombatTimeline;
+
+#[derive(Component)]
+struct TimelineEntryLabel(Entity);
 
 #[derive(Component)]
 struct TimelineHealthBar(Entity);
@@ -384,6 +390,7 @@ fn enter_combat(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     map: Res<CombatMap>,
+    book: Res<SpellBook>,
     mut preparation: ResMut<PreparationPhase>,
 ) {
     preparation.0 = true;
@@ -474,12 +481,12 @@ fn enter_combat(
     }
     super::hud::spawn_hud_window(
         &mut commands,
-        "Deployment",
+        "Phase",
         KeyCode::KeyD,
         CombatPreparation,
         Vec2::new(352.0, 624.0),
-        Vec2::new(576.0, 64.0),
-        "Choose a blue tile, then press Space to begin",
+        Vec2::new(224.0, 44.0),
+        "Preparation Phase",
         16.0,
     );
     super::hud::spawn_hud_window(
@@ -492,9 +499,9 @@ fn enter_combat(
         "",
         16.0,
     );
-    super::hud::spawn_hud_window(
+    let abilities_window = super::hud::spawn_hud_window(
         &mut commands,
-        "Spells",
+        "Abilities",
         KeyCode::KeyP,
         CombatSpells,
         Vec2::new(352.0, 192.0),
@@ -502,6 +509,58 @@ fn enter_combat(
         "",
         16.0,
     );
+    commands.entity(abilities_window).with_children(|window| {
+        window
+            .spawn(Node {
+                width: percent(100),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(8),
+                padding: UiRect::new(px(8), px(28), px(8), px(8)),
+                ..default()
+            })
+            .with_children(|row| {
+                let mut used_letters = Vec::new();
+                for (index, spell) in book.0.iter().enumerate() {
+                    let letter = spell
+                        .name
+                        .chars()
+                        .find(|character| {
+                            character.is_ascii_alphabetic()
+                                && !used_letters.contains(&character.to_ascii_uppercase())
+                        })
+                        .unwrap_or('?')
+                        .to_ascii_uppercase();
+                    used_letters.push(letter);
+                    let color = ability_color(spell);
+                    row.spawn((
+                        AbilityIcon(index),
+                        Button,
+                        Node {
+                            width: px(36),
+                            height: px(36),
+                            flex_shrink: 0.0,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(2)),
+                            ..default()
+                        },
+                        BackgroundColor(color),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+                    ))
+                    .with_children(|icon| {
+                        icon.spawn((
+                            Text::new(letter.to_string()),
+                            TextFont {
+                                font_size: FontSize::Px(18.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
+            });
+    });
     let timeline_window = super::hud::spawn_hud_window(
         &mut commands,
         "Timeline",
@@ -513,33 +572,73 @@ fn enter_combat(
         16.0,
     );
     commands.entity(timeline_window).with_children(|window| {
-        for (index, unit) in turn_order.entities.iter().copied().enumerate() {
-            window
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(12),
-                        top: px(28 + index as i32 * 40),
-                        width: px(184),
-                        height: px(7),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
-                    Pickable::IGNORE,
-                ))
-                .with_children(|track| {
-                    track.spawn((
-                        TimelineHealthBar(unit),
-                        Node {
-                            width: percent(100),
-                            height: percent(100),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
-                        Pickable::IGNORE,
-                    ));
-                });
-        }
+        window
+            .spawn(Node {
+                width: percent(100),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(2),
+                padding: UiRect::new(px(8), px(8), px(0), px(2)),
+                ..default()
+            })
+            .with_children(|entries| {
+                for unit in turn_order.entities.iter().copied() {
+                    entries
+                        .spawn((
+                            Node {
+                                width: percent(100),
+                                height: px(28),
+                                flex_shrink: 0.0,
+                                flex_direction: FlexDirection::Column,
+                                justify_content: JustifyContent::Center,
+                                row_gap: px(2),
+                                padding: UiRect::axes(px(6), px(2)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.15, 0.19, 0.24, 0.9)),
+                            Pickable::IGNORE,
+                        ))
+                        .with_children(|entry| {
+                            entry.spawn((
+                                TimelineEntryLabel(unit),
+                                Text::new(""),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                                TextLayout::new(Justify::Left, LineBreak::WordBoundary),
+                                Node {
+                                    width: percent(100),
+                                    min_width: px(0),
+                                    ..default()
+                                },
+                            ));
+                            entry
+                                .spawn((
+                                    Node {
+                                        width: percent(100),
+                                        height: px(5),
+                                        flex_shrink: 0.0,
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
+                                    Pickable::IGNORE,
+                                ))
+                                .with_children(|track| {
+                                    track.spawn((
+                                        TimelineHealthBar(unit),
+                                        Node {
+                                            width: percent(100),
+                                            height: percent(100),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
+                                        Pickable::IGNORE,
+                                    ));
+                                });
+                        });
+                }
+            });
     });
 }
 
@@ -609,6 +708,8 @@ fn combat_input(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     viewport: Res<GameViewport>,
+    hud: Res<super::hud::HudState>,
+    ability_interactions: Query<(&AbilityIcon, &Interaction), Changed<Interaction>>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     book: Res<SpellBook>,
     mut session: ResMut<Session>,
@@ -633,6 +734,7 @@ fn combat_input(
         }
         if mouse.just_pressed(MouseButton::Left)
             && let Some(cursor) = viewport.cursor
+            && !hud.contains_cursor(cursor)
         {
             let (camera, transform) = *camera;
             if let Ok(ray) = camera.viewport_to_world(transform, cursor)
@@ -664,6 +766,13 @@ fn combat_input(
     if !is_player_turn {
         return;
     }
+    if let Some((AbilityIcon(index), _)) = ability_interactions
+        .iter()
+        .find(|(_, interaction)| **interaction == Interaction::Pressed)
+    {
+        session.spell_selected = Some(*index);
+        return;
+    }
     let spell_keys = [
         KeyCode::Digit1,
         KeyCode::Digit2,
@@ -687,6 +796,9 @@ fn combat_input(
     let Some(cursor) = viewport.cursor else {
         return;
     };
+    if hud.contains_cursor(cursor) {
+        return;
+    }
     let (camera, transform) = *camera;
     let Ok(ray) = camera.viewport_to_world(transform, cursor) else {
         return;
@@ -1112,16 +1224,12 @@ fn line_clear(map: &CombatMap, from: IVec2, to: IVec2) -> bool {
 
 fn update_combat_preparation(
     preparation: Res<PreparationPhase>,
-    map: Res<CombatMap>,
     mut text: Single<&mut Text, With<CombatPreparation>>,
 ) {
     text.0 = if preparation.0 {
-        format!(
-            "{}: choose a blue tile, then press Space to begin",
-            map.name
-        )
+        "Preparation Phase".to_owned()
     } else {
-        "Combat started — Space ends your turn".to_owned()
+        "Combat Phase".to_owned()
     };
 }
 
@@ -1134,45 +1242,32 @@ fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Q
     stats.0 = format!("HP {current_hp}/{total_hp}    MP {mp}    AP {ap}");
 }
 
-fn update_combat_spells(
-    session: Res<Session>,
-    book: Res<SpellBook>,
-    mut text: Single<&mut Text, With<CombatSpells>>,
-) {
-    text.0 = book
-        .0
-        .iter()
-        .enumerate()
-        .map(|(index, spell)| {
-            let selected = if session.spell_selected == Some(index) {
-                "* "
-            } else {
-                ""
-            };
-            let damage = if spell.base_damage > 0 {
-                format!(
-                    " - {} AP, {} {} ({})",
-                    spell.ap_cost,
-                    spell.base_damage,
-                    match spell.damage_type {
-                        DamageType::Physical => "physical",
-                        DamageType::Magical => "magical",
-                    },
-                    spell.range
-                )
-            } else {
-                format!(" - {} AP, range {}", spell.ap_cost, spell.range)
-            };
-            format!("{}[{}] {}{}", selected, index + 1, spell.name, damage)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+fn ability_color(spell: &Spell) -> Color {
+    if spell.base_damage == 0 {
+        Color::srgb(0.35, 0.37, 0.40)
+    } else {
+        match spell.damage_type {
+            DamageType::Magical => Color::srgb(0.48, 0.22, 0.72),
+            DamageType::Physical => Color::srgb(0.85, 0.38, 0.12),
+        }
+    }
+}
+
+fn update_combat_spells(session: Res<Session>, mut icons: Query<(&mut BorderColor, &AbilityIcon)>) {
+    for (mut border, AbilityIcon(index)) in &mut icons {
+        let color = if session.spell_selected == Some(*index) {
+            Color::WHITE
+        } else {
+            Color::srgba(1.0, 1.0, 1.0, 0.35)
+        };
+        *border = BorderColor::all(color);
+    }
 }
 
 fn update_combat_timeline(
     turn_order: Res<TurnOrder>,
     units: Query<&Unit>,
-    mut timeline: Single<&mut Text, With<CombatTimeline>>,
+    mut labels: Query<(&mut Text, &TimelineEntryLabel)>,
     mut health_bars: Query<(&mut Node, &TimelineHealthBar)>,
 ) {
     for (mut node, TimelineHealthBar(entity)) in &mut health_bars {
@@ -1189,33 +1284,39 @@ fn update_combat_timeline(
         node.width = percent(ratio * 100.0);
     }
 
-    let entries = turn_order
-        .entities
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entity)| {
-            let unit = units.get(*entity).ok()?;
-            if unit.team == Team::Enemy && unit.hp <= 0 {
-                return None;
-            }
-            let label = if index == 0 {
-                "Player"
-            } else if unit.team == Team::Enemy {
-                if index == 1 { "Enemy 1" } else { "Enemy 2" }
-            } else {
-                "Entity"
-            };
-            let current_hp = unit.hp.clamp(0, unit.max_hp.max(0));
-            let max_hp = unit.max_hp.max(0);
-            let name = if index == turn_order.active {
-                format!("> {label}")
-            } else {
-                format!("  {label}")
-            };
-            Some(format!("{name}  {current_hp}/{max_hp}"))
-        })
-        .collect::<Vec<_>>();
-    timeline.0 = entries.join("\n\n");
+    for (mut text, TimelineEntryLabel(entity)) in &mut labels {
+        let Ok(unit) = units.get(*entity) else {
+            text.0 = "Unavailable".to_owned();
+            continue;
+        };
+        let Some(index) = turn_order
+            .entities
+            .iter()
+            .position(|current| current == entity)
+        else {
+            continue;
+        };
+        let label = if index == 0 {
+            "Player"
+        } else if unit.team == Team::Enemy {
+            if index == 1 { "Enemy 1" } else { "Enemy 2" }
+        } else {
+            "Entity"
+        };
+        let current_hp = unit.hp.clamp(0, unit.max_hp.max(0));
+        let max_hp = unit.max_hp.max(0);
+        let status = if unit.team == Team::Enemy && unit.hp <= 0 {
+            " (DEAD)"
+        } else {
+            ""
+        };
+        let active = if index == turn_order.active && unit.hp > 0 {
+            "> "
+        } else {
+            ""
+        };
+        text.0 = format!("{active}{label}{status} {current_hp}/{max_hp}");
+    }
 }
 
 fn finish_if_won(units: Query<&Unit, With<CombatObject>>, mut next: ResMut<NextState<GameMode>>) {
