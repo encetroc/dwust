@@ -9,6 +9,7 @@ mod config;
 mod headless;
 mod hud;
 mod hud_layout;
+mod inventory;
 use config::*;
 
 #[cfg(test)]
@@ -186,7 +187,11 @@ struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<combat::GameMode>()
-            .add_plugins((combat::CombatPlugin, hud::HudPlugin))
+            .add_plugins((
+                combat::CombatPlugin,
+                hud::HudPlugin,
+                inventory::InventoryPlugin,
+            ))
             .init_resource::<MovementSettings>()
             .init_resource::<GameViewport>()
             .init_resource::<OverlayPointer>()

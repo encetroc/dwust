@@ -510,6 +510,7 @@ fn enter_combat(
         Vec2::new(352.0, 624.0),
         phase_grid,
         true,
+        true,
     );
     commands.entity(phase_content).with_children(|grid| {
         grid.spawn((
@@ -537,6 +538,7 @@ fn enter_combat(
         CombatStats,
         Vec2::new(16.0, 192.0),
         stats_grid,
+        true,
         true,
     );
     commands.entity(stats_content).with_children(|grid| {
@@ -567,6 +569,7 @@ fn enter_combat(
         CombatSpells,
         Vec2::new(352.0, 192.0),
         abilities_grid,
+        true,
         true,
     );
     commands.entity(abilities_content).with_children(|grid| {
@@ -622,6 +625,7 @@ fn enter_combat(
         CombatTimeline,
         Vec2::new(16.0, 416.0),
         timeline_grid,
+        true,
         true,
     );
     commands.entity(timeline_content).with_children(|entries| {

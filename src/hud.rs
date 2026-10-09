@@ -10,21 +10,21 @@ const HUD_LAYOUT_PATH: &str = "hud_layout.json";
 const STATS_KEY: &str = "Stats";
 
 #[derive(Resource, Default, Serialize, Deserialize)]
-struct HudLayout {
+pub(super) struct HudLayout {
     positions: HashMap<String, [f32; 2]>,
     #[serde(default)]
     visibility: HashMap<String, bool>,
 }
 
 impl HudLayout {
-    fn position(&self, key: &str) -> Option<Vec2> {
+    pub(super) fn position(&self, key: &str) -> Option<Vec2> {
         self.positions
             .get(key)
             .map(|position| Vec2::from_array(*position))
     }
 
-    fn visible(&self, key: &str) -> bool {
-        self.visibility.get(key).copied().unwrap_or(true)
+    fn visible(&self, key: &str, default: bool) -> bool {
+        self.visibility.get(key).copied().unwrap_or(default)
     }
 
     fn set_visible(&mut self, key: &str, visible: bool) -> bool {
@@ -128,6 +128,7 @@ pub(super) fn spawn_hud_window<C: Component>(
     position: Vec2,
     grid: HudGrid,
     despawn_on_combat: bool,
+    initially_visible: bool,
 ) -> (Entity, Entity) {
     let position = hud_layout::constrain_panel_position(position, Vec2::splat(SNAP));
     let content = commands.spawn((HudGridContent, grid.node())).id();
@@ -139,7 +140,7 @@ pub(super) fn spawn_hud_window<C: Component>(
                 hotkey,
                 position,
                 size: Vec2::splat(SNAP),
-                visible: true,
+                visible: initially_visible,
                 measured: false,
                 dragging: false,
                 drag_offset: Vec2::ZERO,
@@ -152,7 +153,8 @@ pub(super) fn spawn_hud_window<C: Component>(
                 width: auto(),
                 height: auto(),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Start,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
                 border: UiRect::all(px(1)),
                 ..default()
             },
@@ -208,7 +210,7 @@ fn load_hud_layout(mut layout: ResMut<HudLayout>) {
 }
 
 fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
-    let grid = HudGrid::content_sized(2, 5, 20.0, 9.0, UiRect::all(px(12.0)));
+    let grid = HudGrid::content_sized(2, 7, 20.0, 9.0, UiRect::all(px(12.0)));
     let (_, content) = spawn_hud_window(
         &mut commands,
         STATS_KEY,
@@ -217,10 +219,15 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         layout.position(STATS_KEY).unwrap_or(Vec2::splat(SNAP)),
         grid,
         false,
+        true,
     );
     commands.entity(content).with_children(|body| {
         stat_cell(body, "Total HP", Color::srgb(0.36, 0.84, 0.48), 14.0);
         stat_cell(body, "100", Color::WHITE, 16.0);
+        stat_cell(body, "Total MP", Color::srgb(0.36, 0.72, 0.96), 14.0);
+        stat_cell(body, "3", Color::WHITE, 16.0);
+        stat_cell(body, "Total AP", Color::srgb(0.82, 0.58, 0.96), 14.0);
+        stat_cell(body, "6", Color::WHITE, 16.0);
         stat_cell(body, "Physical Damage", Color::srgb(0.95, 0.68, 0.30), 14.0);
         stat_cell(body, "12%", Color::WHITE, 16.0);
         stat_cell(body, "Magical Damage", Color::srgb(0.43, 0.68, 0.98), 14.0);
@@ -456,7 +463,7 @@ fn restore_hud_window_positions(
     mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Added<HudWindow>>,
 ) {
     for (mut window, mut node, mut visibility) in &mut windows {
-        window.visible = layout.visible(&window.key);
+        window.visible = layout.visible(&window.key, window.visible);
         visibility.set_if_neq(if window.visible {
             Visibility::Visible
         } else {
@@ -546,7 +553,7 @@ mod tests {
         let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.position(STATS_KEY), Some(Vec2::new(48.0, 64.0)));
-        assert!(decoded.visible(STATS_KEY));
+        assert!(decoded.visible(STATS_KEY, true));
     }
 
     #[test]
@@ -572,9 +579,10 @@ mod tests {
 
         let encoded = serde_json::to_string(&layout).unwrap();
         let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
-        assert!(!decoded.visible(STATS_KEY));
+        assert!(!decoded.visible(STATS_KEY, true));
 
         let legacy: HudLayout = serde_json::from_str(r#"{"positions":{}}"#).unwrap();
-        assert!(legacy.visible(STATS_KEY));
+        assert!(legacy.visible(STATS_KEY, true));
+        assert!(!legacy.visible("Inventory", false));
     }
 }

@@ -116,8 +116,8 @@ fn capture_combat_ui(
     let module_nodes = modules.iter().collect::<Vec<_>>();
     assert_eq!(
         module_nodes.len(),
-        5,
-        "expected the four combat modules and the shared stats panel"
+        7,
+        "expected the five combat modules, shared stats panel, inventory panel, and equipment panel"
     );
     for node in module_nodes {
         for edge in [node.left, node.top, node.width, node.height] {
@@ -142,7 +142,7 @@ fn capture_combat_ui(
             )
         })
         .collect::<Vec<_>>();
-    for expected in [(10, 2), (1, 3), (2, 5), (3, 1), (1, 1)] {
+    for expected in [(10, 2), (1, 3), (2, 7), (3, 1), (5, 10), (1, 4), (1, 1)] {
         assert!(
             grid_shapes.contains(&expected),
             "HUD is missing its {expected:?} content grid: {grid_shapes:?}"
