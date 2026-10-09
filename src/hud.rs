@@ -9,41 +9,101 @@ use std::collections::HashMap;
 const HUD_LAYOUT_PATH: &str = "hud_layout.json";
 const STATS_KEY: &str = "Stats";
 
-#[derive(Resource, Default, Serialize, Deserialize)]
-pub(super) struct HudLayout {
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum HudLayoutType {
+    Combat,
+    #[default]
+    World,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HudModuleType {
+    Both,
+    CombatOnly,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct HudLayoutData {
+    #[serde(default)]
     positions: HashMap<String, [f32; 2]>,
     #[serde(default)]
     visibility: HashMap<String, bool>,
 }
 
+#[derive(Resource, Default, Serialize, Deserialize)]
+pub(super) struct HudLayout {
+    #[serde(default)]
+    combat: HudLayoutData,
+    #[serde(default)]
+    world: HudLayoutData,
+    // Read old single-layout files, then migrate them on load.
+    #[serde(default, skip_serializing)]
+    positions: HashMap<String, [f32; 2]>,
+    #[serde(default, skip_serializing)]
+    visibility: HashMap<String, bool>,
+}
+
 impl HudLayout {
-    pub(super) fn position(&self, key: &str) -> Option<Vec2> {
-        self.positions
+    fn data(&self, layout: HudLayoutType) -> &HudLayoutData {
+        match layout {
+            HudLayoutType::Combat => &self.combat,
+            HudLayoutType::World => &self.world,
+        }
+    }
+
+    fn data_mut(&mut self, layout: HudLayoutType) -> &mut HudLayoutData {
+        match layout {
+            HudLayoutType::Combat => &mut self.combat,
+            HudLayoutType::World => &mut self.world,
+        }
+    }
+
+    fn migrate_legacy(&mut self) {
+        if !self.positions.is_empty() || !self.visibility.is_empty() {
+            for data in [&mut self.combat, &mut self.world] {
+                data.positions.clone_from(&self.positions);
+                data.visibility.clone_from(&self.visibility);
+            }
+            self.positions.clear();
+            self.visibility.clear();
+        }
+    }
+
+    pub(super) fn position(&self, layout: HudLayoutType, key: &str) -> Option<Vec2> {
+        self.data(layout)
+            .positions
             .get(key)
             .map(|position| Vec2::from_array(*position))
     }
 
-    fn visible(&self, key: &str, default: bool) -> bool {
-        self.visibility.get(key).copied().unwrap_or(default)
+    fn visible(&self, layout: HudLayoutType, key: &str, default: bool) -> bool {
+        self.data(layout)
+            .visibility
+            .get(key)
+            .copied()
+            .unwrap_or(default)
     }
 
-    fn set_visible(&mut self, key: &str, visible: bool) -> bool {
-        if self.visibility.get(key) == Some(&visible) {
+    fn set_visible(&mut self, layout: HudLayoutType, key: &str, visible: bool) -> bool {
+        let data = self.data_mut(layout);
+        if data.visibility.get(key) == Some(&visible) {
             return false;
         }
-        self.visibility.insert(key.to_owned(), visible);
+        data.visibility.insert(key.to_owned(), visible);
         true
     }
 
-    fn set_position(&mut self, key: &str, position: Vec2) -> bool {
+    fn set_position(&mut self, layout: HudLayoutType, key: &str, position: Vec2) -> bool {
+        let data = self.data_mut(layout);
         let next = position.to_array();
-        if self.positions.get(key).is_some_and(|current| {
+        if data.positions.get(key).is_some_and(|current| {
             (current[0] - next[0]).abs() < f32::EPSILON
                 && (current[1] - next[1]).abs() < f32::EPSILON
         }) {
             return false;
         }
-        self.positions.insert(key.to_owned(), next);
+        data.positions.insert(key.to_owned(), next);
         true
     }
 }
@@ -82,6 +142,8 @@ struct CloseHudWindow(Entity);
 #[derive(Component)]
 pub(super) struct HudWindow {
     key: String,
+    layout_type: HudLayoutType,
+    module_type: HudModuleType,
     position: Vec2,
     size: Vec2,
     hotkey: Option<KeyCode>,
@@ -127,7 +189,7 @@ pub(super) fn spawn_hud_window<C: Component>(
     content_marker: C,
     position: Vec2,
     grid: HudGrid,
-    despawn_on_combat: bool,
+    module_type: HudModuleType,
     initially_visible: bool,
 ) -> (Entity, Entity) {
     let position = hud_layout::constrain_panel_position(position, Vec2::splat(SNAP));
@@ -137,6 +199,12 @@ pub(super) fn spawn_hud_window<C: Component>(
             content_marker,
             HudWindow {
                 key: title.to_owned(),
+                layout_type: if module_type == HudModuleType::CombatOnly {
+                    HudLayoutType::Combat
+                } else {
+                    HudLayoutType::World
+                },
+                module_type,
                 hotkey,
                 position,
                 size: Vec2::splat(SNAP),
@@ -166,7 +234,7 @@ pub(super) fn spawn_hud_window<C: Component>(
         ))
         .id();
     commands.entity(entity).add_child(content);
-    if despawn_on_combat {
+    if module_type == HudModuleType::CombatOnly {
         commands
             .entity(entity)
             .insert(DespawnOnExit(crate::combat::GameMode::Combat));
@@ -199,7 +267,10 @@ fn measure_hud_windows(
 fn load_hud_layout(mut layout: ResMut<HudLayout>) {
     match std::fs::read_to_string(HUD_LAYOUT_PATH) {
         Ok(contents) => match serde_json::from_str::<HudLayout>(&contents) {
-            Ok(saved) => *layout = saved,
+            Ok(mut saved) => {
+                saved.migrate_legacy();
+                *layout = saved;
+            }
             Err(error) => warn!("Could not parse {HUD_LAYOUT_PATH}: {error}"),
         },
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
@@ -216,9 +287,11 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         STATS_KEY,
         Some(KeyCode::KeyS),
         StatsPanel,
-        layout.position(STATS_KEY).unwrap_or(Vec2::splat(SNAP)),
+        layout
+            .position(HudLayoutType::World, STATS_KEY)
+            .unwrap_or(Vec2::splat(SNAP)),
         grid,
-        false,
+        HudModuleType::Both,
         true,
     );
     commands.entity(content).with_children(|body| {
@@ -437,15 +510,12 @@ fn interact_with_hud_context_menu(
 
 fn toggle_hud_windows(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mode: Res<State<crate::combat::GameMode>>,
-    mut windows: Query<(&mut HudWindow, &mut Visibility, Option<&StatsPanel>)>,
+    mut windows: Query<(&mut HudWindow, &mut Visibility)>,
 ) {
-    for (mut window, mut visibility, stats_panel) in &mut windows {
-        let allowed = stats_panel.is_none() || *mode.get() == crate::combat::GameMode::World;
-        if allowed
-            && window
-                .hotkey
-                .is_some_and(|hotkey| keyboard.just_pressed(hotkey))
+    for (mut window, mut visibility) in &mut windows {
+        if window
+            .hotkey
+            .is_some_and(|hotkey| keyboard.just_pressed(hotkey))
         {
             window.visible = !window.visible;
             window.dragging = false;
@@ -463,13 +533,13 @@ fn restore_hud_window_positions(
     mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Added<HudWindow>>,
 ) {
     for (mut window, mut node, mut visibility) in &mut windows {
-        window.visible = layout.visible(&window.key, window.visible);
+        window.visible = layout.visible(window.layout_type, &window.key, window.visible);
         visibility.set_if_neq(if window.visible {
             Visibility::Visible
         } else {
             Visibility::Hidden
         });
-        if let Some(position) = layout.position(&window.key) {
+        if let Some(position) = layout.position(window.layout_type, &window.key) {
             window.position = hud_layout::constrain_panel_position(position, window.size);
             node.left = px(window.position.x);
             node.top = px(window.position.y);
@@ -483,8 +553,8 @@ fn save_hud_layout(windows: Query<&HudWindow>, mut layout: ResMut<HudLayout>) {
     }
     let mut changed = false;
     for window in &windows {
-        changed |= layout.set_position(&window.key, window.position);
-        changed |= layout.set_visible(&window.key, window.visible);
+        changed |= layout.set_position(window.layout_type, &window.key, window.position);
+        changed |= layout.set_visible(window.layout_type, &window.key, window.visible);
     }
     if changed {
         match serde_json::to_string_pretty(&*layout)
@@ -499,24 +569,31 @@ fn save_hud_layout(windows: Query<&HudWindow>, mut layout: ResMut<HudLayout>) {
 
 fn sync_hud(
     mut state: ResMut<HudState>,
+    layout: Res<HudLayout>,
+    mut last_layout: Local<Option<HudLayoutType>>,
     mut grid: Single<&mut Node, With<SnapGrid>>,
     mode: Res<State<crate::combat::GameMode>>,
-    mut windows: Query<
-        (
-            &mut HudWindow,
-            &mut Node,
-            &mut Visibility,
-            Option<&StatsPanel>,
-        ),
-        Without<SnapGrid>,
-    >,
+    mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Without<SnapGrid>>,
 ) {
+    let active_layout = match mode.get() {
+        crate::combat::GameMode::Combat => HudLayoutType::Combat,
+        crate::combat::GameMode::World => HudLayoutType::World,
+    };
+    let layout_changed = *last_layout != Some(active_layout);
+    *last_layout = Some(active_layout);
     state.cursor_bounds.clear();
     let mut dragging = false;
-    for (window, mut node, mut visibility, stats_panel) in &mut windows {
-        let active = window.visible
-            && window.measured
-            && (stats_panel.is_none() || *mode.get() == crate::combat::GameMode::World);
+    for (mut window, mut node, mut visibility) in &mut windows {
+        if layout_changed && window.module_type == HudModuleType::Both {
+            window.layout_type = active_layout;
+            window.visible = layout.visible(active_layout, &window.key, window.visible);
+            if let Some(position) = layout.position(active_layout, &window.key) {
+                window.position = hud_layout::constrain_panel_position(position, window.size);
+            }
+        }
+        let available =
+            window.module_type == HudModuleType::Both || active_layout == HudLayoutType::Combat;
+        let active = available && window.visible && window.measured;
         visibility.set_if_neq(if active {
             Visibility::Visible
         } else {
@@ -546,14 +623,17 @@ mod tests {
     #[test]
     fn hud_layout_round_trips_named_positions() {
         let mut layout = HudLayout::default();
-        assert!(layout.set_position(STATS_KEY, Vec2::new(48.0, 64.0)));
-        assert!(!layout.set_position(STATS_KEY, Vec2::new(48.0, 64.0)));
+        assert!(layout.set_position(HudLayoutType::World, STATS_KEY, Vec2::new(48.0, 64.0)));
+        assert!(!layout.set_position(HudLayoutType::World, STATS_KEY, Vec2::new(48.0, 64.0)));
 
         let encoded = serde_json::to_string(&layout).unwrap();
         let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
 
-        assert_eq!(decoded.position(STATS_KEY), Some(Vec2::new(48.0, 64.0)));
-        assert!(decoded.visible(STATS_KEY, true));
+        assert_eq!(
+            decoded.position(HudLayoutType::World, STATS_KEY),
+            Some(Vec2::new(48.0, 64.0))
+        );
+        assert!(decoded.visible(HudLayoutType::World, STATS_KEY, true));
     }
 
     #[test]
@@ -572,17 +652,48 @@ mod tests {
     }
 
     #[test]
-    fn hud_layout_round_trips_closed_visibility_and_loads_legacy_layouts() {
+    fn combat_and_world_layouts_keep_independent_positions_and_visibility() {
         let mut layout = HudLayout::default();
-        assert!(layout.set_visible(STATS_KEY, false));
-        assert!(!layout.set_visible(STATS_KEY, false));
+        layout.set_position(HudLayoutType::Combat, STATS_KEY, Vec2::new(16.0, 32.0));
+        layout.set_position(HudLayoutType::World, STATS_KEY, Vec2::new(96.0, 112.0));
+        layout.set_visible(HudLayoutType::Combat, STATS_KEY, false);
 
         let encoded = serde_json::to_string(&layout).unwrap();
         let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
-        assert!(!decoded.visible(STATS_KEY, true));
 
-        let legacy: HudLayout = serde_json::from_str(r#"{"positions":{}}"#).unwrap();
-        assert!(legacy.visible(STATS_KEY, true));
-        assert!(!legacy.visible("Inventory", false));
+        assert_eq!(
+            decoded.position(HudLayoutType::Combat, STATS_KEY),
+            Some(Vec2::new(16.0, 32.0))
+        );
+        assert_eq!(
+            decoded.position(HudLayoutType::World, STATS_KEY),
+            Some(Vec2::new(96.0, 112.0))
+        );
+        assert!(!decoded.visible(HudLayoutType::Combat, STATS_KEY, true));
+        assert!(decoded.visible(HudLayoutType::World, STATS_KEY, true));
+    }
+
+    #[test]
+    fn hud_layout_round_trips_closed_visibility_and_loads_legacy_layouts() {
+        let mut layout = HudLayout::default();
+        assert!(layout.set_visible(HudLayoutType::World, STATS_KEY, false));
+        assert!(!layout.set_visible(HudLayoutType::World, STATS_KEY, false));
+
+        let encoded = serde_json::to_string(&layout).unwrap();
+        let decoded: HudLayout = serde_json::from_str(&encoded).unwrap();
+        assert!(!decoded.visible(HudLayoutType::World, STATS_KEY, true));
+
+        let mut legacy: HudLayout =
+            serde_json::from_str(r#"{"positions":{"Stats":[48.0,64.0]}}"#).unwrap();
+        legacy.migrate_legacy();
+        assert_eq!(
+            legacy.position(HudLayoutType::Combat, STATS_KEY),
+            Some(Vec2::new(48.0, 64.0))
+        );
+        assert_eq!(
+            legacy.position(HudLayoutType::World, STATS_KEY),
+            Some(Vec2::new(48.0, 64.0))
+        );
+        assert!(!legacy.visible(HudLayoutType::World, "Inventory", false));
     }
 }

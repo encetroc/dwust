@@ -28,10 +28,10 @@ fn spawn_inventory_panels(mut commands: Commands, layout: Res<hud::HudLayout>) {
         Some(KeyCode::KeyI),
         InventoryPanel,
         layout
-            .position(INVENTORY_KEY)
+            .position(hud::HudLayoutType::World, INVENTORY_KEY)
             .unwrap_or(Vec2::new(560.0, 128.0)),
         inventory_grid,
-        false,
+        hud::HudModuleType::Both,
         false,
     );
     commands
@@ -55,10 +55,10 @@ fn spawn_inventory_panels(mut commands: Commands, layout: Res<hud::HudLayout>) {
         Some(KeyCode::KeyE),
         EquipmentPanel,
         layout
-            .position(EQUIPMENT_KEY)
+            .position(hud::HudLayoutType::World, EQUIPMENT_KEY)
             .unwrap_or(Vec2::new(832.0, 16.0)),
         equipment_grid,
-        false,
+        hud::HudModuleType::Both,
         false,
     );
     commands

@@ -270,7 +270,7 @@ impl Plugin for CombatPlugin {
             .init_resource::<PreparationPhase>()
             .insert_resource(CombatMap::load())
             .init_resource::<SpellBook>()
-            .add_systems(Startup, load_spells)
+            .add_systems(Startup, (load_spells, spawn_shared_combat_modules).chain())
             .init_resource::<TurnOrder>()
             .insert_resource(EnemyTurnDelay(Timer::from_seconds(0.65, TimerMode::Once)))
             .add_systems(Startup, spawn_world_enemies)
@@ -319,6 +319,64 @@ fn load_spells(mut book: ResMut<SpellBook>) {
         "spell AP cost and range must be non-negative; area must be a non-empty odd-sized matrix with a true center"
     );
     book.0 = spells;
+}
+
+fn spawn_shared_combat_modules(mut commands: Commands, book: Res<SpellBook>) {
+    let abilities_grid = super::hud_layout::HudGrid::fixed_cells(
+        10,
+        2,
+        36.0,
+        8.0,
+        UiRect::new(px(8), px(28), px(8), px(8)),
+    );
+    let (_, abilities_content) = super::hud::spawn_hud_window(
+        &mut commands,
+        "Abilities",
+        Some(KeyCode::KeyP),
+        CombatSpells,
+        Vec2::new(352.0, 192.0),
+        abilities_grid,
+        super::hud::HudModuleType::Both,
+        true,
+    );
+    commands.entity(abilities_content).with_children(|grid| {
+        let mut used_letters = Vec::new();
+        for (index, spell) in book.0.iter().enumerate() {
+            let letter = spell
+                .name
+                .chars()
+                .find(|character| {
+                    character.is_ascii_alphabetic()
+                        && !used_letters.contains(&character.to_ascii_uppercase())
+                })
+                .unwrap_or('?')
+                .to_ascii_uppercase();
+            used_letters.push(letter);
+            let color = ability_color(spell);
+            grid.spawn((
+                AbilityIcon(index),
+                Button,
+                Node {
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(2)),
+                    ..default()
+                },
+                BackgroundColor(color),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+            ))
+            .with_children(|icon| {
+                icon.spawn((
+                    Text::new(letter.to_string()),
+                    TextFont {
+                        font_size: FontSize::Px(18.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        }
+    });
 }
 
 fn spawn_world_enemies(
@@ -406,7 +464,6 @@ fn enter_combat(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     map: Res<CombatMap>,
-    book: Res<SpellBook>,
     mut preparation: ResMut<PreparationPhase>,
 ) {
     preparation.0 = true;
@@ -509,7 +566,7 @@ fn enter_combat(
         CombatPhasePanel,
         Vec2::new(352.0, 624.0),
         phase_grid,
-        true,
+        super::hud::HudModuleType::CombatOnly,
         true,
     );
     commands.entity(phase_content).with_children(|grid| {
@@ -534,11 +591,11 @@ fn enter_combat(
     let (_, stats_content) = super::hud::spawn_hud_window(
         &mut commands,
         "HP / MP / AP",
-        Some(KeyCode::KeyS),
+        Some(KeyCode::KeyH),
         CombatStats,
         Vec2::new(16.0, 192.0),
         stats_grid,
-        true,
+        super::hud::HudModuleType::CombatOnly,
         true,
     );
     commands.entity(stats_content).with_children(|grid| {
@@ -552,62 +609,6 @@ fn enter_combat(
                 },
                 TextColor(Color::WHITE),
             ));
-        }
-    });
-
-    let abilities_grid = super::hud_layout::HudGrid::fixed_cells(
-        10,
-        2,
-        36.0,
-        8.0,
-        UiRect::new(px(8), px(28), px(8), px(8)),
-    );
-    let (_, abilities_content) = super::hud::spawn_hud_window(
-        &mut commands,
-        "Abilities",
-        Some(KeyCode::KeyP),
-        CombatSpells,
-        Vec2::new(352.0, 192.0),
-        abilities_grid,
-        true,
-        true,
-    );
-    commands.entity(abilities_content).with_children(|grid| {
-        let mut used_letters = Vec::new();
-        for (index, spell) in book.0.iter().enumerate() {
-            let letter = spell
-                .name
-                .chars()
-                .find(|character| {
-                    character.is_ascii_alphabetic()
-                        && !used_letters.contains(&character.to_ascii_uppercase())
-                })
-                .unwrap_or('?')
-                .to_ascii_uppercase();
-            used_letters.push(letter);
-            let color = ability_color(spell);
-            grid.spawn((
-                AbilityIcon(index),
-                Button,
-                Node {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(px(2)),
-                    ..default()
-                },
-                BackgroundColor(color),
-                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-            ))
-            .with_children(|icon| {
-                icon.spawn((
-                    Text::new(letter.to_string()),
-                    TextFont {
-                        font_size: FontSize::Px(18.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ));
-            });
         }
     });
 
@@ -625,7 +626,7 @@ fn enter_combat(
         CombatTimeline,
         Vec2::new(16.0, 416.0),
         timeline_grid,
-        true,
+        super::hud::HudModuleType::CombatOnly,
         true,
     );
     commands.entity(timeline_content).with_children(|entries| {
