@@ -114,8 +114,8 @@ fn capture_combat_ui(
     }
     assert_eq!(
         modules.iter().count(),
-        3,
-        "expected all three combat modules"
+        4,
+        "expected all four combat modules including deployment status"
     );
     state.pending = true;
     let output = state.output.clone();
@@ -134,10 +134,10 @@ fn capture_combat_ui(
                 .expect("save combat UI screenshot");
             std::fs::write(
                 output.join("result.txt"),
-                "PASS: real combat scene, headless render target, 3 combat UI modules, 1280x720 screenshot\n",
+                "PASS: real combat scene, headless render target, 4 combat UI modules including deployment status, 1280x720 screenshot\n",
             )
             .expect("save verification result");
-            println!("PASS: captured real combat UI at 1280x720");
+            println!("PASS: captured real combat UI with deployment status at 1280x720");
             exit.write(AppExit::Success);
         });
 }

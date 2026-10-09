@@ -8,7 +8,7 @@ cargo run
 
 - Roam continuously through the world: click the ground to walk to any visible point, or use WASD/arrow keys for direct movement. Mouse movement routes around building footprints; keyboard movement is direct.
 - The camera follows the player, and the ground recenters beneath it. There are no screen boundaries, edge exits, or screen transitions. Movement defaults to 14 units/second.
-- Combat spells are loaded from `assets/spells.json`. Select a spell with its number key, then click a valid target in range; `Escape` cancels selection. The configured AP cost is deducted on a successful cast, and AOE affects eligible units around the clicked target cell. Physical and magical damage bonuses are percentages; spell damage is `base_damage * (1 + damage_bonus / 100)` for the matching type.
+- Combat begins in a deployment phase. Choose a blue starting tile and press `Space` when ready; red tiles show enemy deployment cells. During combat, obstacles block movement and line-of-sight targeting, while holes block movement. Combat spells are loaded from `assets/spells.json`. Select a spell with its number key, then click a valid target in range; `Escape` cancels selection. The configured AP cost is deducted on a successful cast, and AOE affects eligible units around the clicked target cell. Physical and magical damage bonuses are percentages; spell damage is `base_damage * (1 + damage_bonus / 100)` for the matching type.
 - Set the starting speed with `DWUST_MOVE_SPEED`, for example:
 
 ```sh
@@ -16,6 +16,10 @@ DWUST_MOVE_SPEED=24 cargo run
 ```
 
 Invalid speeds fall back to 14. The ground uses a neutral gray material.
+
+### Adding combat maps
+
+Combat maps are saved as versionable JSON files in `assets/combat_maps/`. The current map, `stone_causeway.json`, defines its ID/name, fixed 10×8 grid, obstacle rows (`#` for blocking terrain), holes, and player/enemy deployment coordinates. Every spawn cell must be in bounds and on walkable terrain. Add future maps using the same schema; map selection can later choose among these authored files without encoding map layouts in Rust.
 
 ### Adding spells
 

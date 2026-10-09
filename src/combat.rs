@@ -1,8 +1,9 @@
 use super::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-const GRID_W: i32 = 8;
-const GRID_H: i32 = 6;
+const GRID_W: i32 = 10;
+const GRID_H: i32 = 8;
+const COMBAT_MAP_PATH: &str = "assets/combat_maps/stone_causeway.json";
 const TILE: f32 = 2.0;
 
 #[derive(States, Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -94,10 +95,118 @@ struct Spell {
 #[derive(Resource, Default)]
 struct SpellBook(Vec<Spell>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Terrain {
+    Floor,
+    Obstacle,
+    Hole,
+}
+
 #[derive(Component)]
 struct CombatTile {
     cell: IVec2,
     base_color: Color,
+    terrain: Terrain,
+}
+
+#[derive(Component)]
+struct CombatPreparation;
+
+#[derive(Resource, Default)]
+struct PreparationPhase(bool);
+
+#[derive(Resource, Debug, Deserialize, Serialize)]
+struct CombatMap {
+    id: String,
+    name: String,
+    width: i32,
+    height: i32,
+    terrain: Vec<String>,
+    player_spawns: Vec<[i32; 2]>,
+    enemy_spawns: Vec<[i32; 2]>,
+    holes: Vec<[i32; 2]>,
+}
+
+impl CombatMap {
+    fn load() -> Self {
+        let contents = std::fs::read_to_string(COMBAT_MAP_PATH)
+            .unwrap_or_else(|error| panic!("failed to read {COMBAT_MAP_PATH}: {error}"));
+        let map: Self = serde_json::from_str(&contents).unwrap_or_else(|error| {
+            panic!("{COMBAT_MAP_PATH} must contain a valid combat map: {error}")
+        });
+        assert!(
+            map.width == GRID_W && map.height == GRID_H,
+            "combat map dimensions must be {GRID_W}x{GRID_H}"
+        );
+        assert!(
+            map.terrain.len() == map.height as usize
+                && map
+                    .terrain
+                    .iter()
+                    .all(|row| row.chars().count() == map.width as usize),
+            "combat map terrain rows must match its dimensions"
+        );
+        assert!(
+            !map.player_spawns.is_empty() && map.enemy_spawns.len() >= 2,
+            "combat map needs player and enemy spawn cells"
+        );
+        for cell in map
+            .player_spawns
+            .iter()
+            .chain(&map.enemy_spawns)
+            .chain(&map.holes)
+        {
+            assert!(
+                cell[0] >= 0 && cell[0] < map.width && cell[1] >= 0 && cell[1] < map.height,
+                "combat map contains out-of-bounds cell {cell:?}"
+            );
+        }
+        map
+    }
+
+    fn terrain_at(&self, cell: IVec2) -> Terrain {
+        if self.holes.contains(&[cell.x, cell.y]) {
+            return Terrain::Hole;
+        }
+        match self.terrain[cell.y as usize]
+            .chars()
+            .nth(cell.x as usize)
+            .unwrap()
+        {
+            '#' => Terrain::Obstacle,
+            _ => Terrain::Floor,
+        }
+    }
+
+    fn player_cells(&self) -> Vec<IVec2> {
+        self.player_spawns
+            .iter()
+            .map(|p| IVec2::new(p[0], p[1]))
+            .collect()
+    }
+
+    fn enemy_cells(&self) -> Vec<IVec2> {
+        self.enemy_spawns
+            .iter()
+            .map(|p| IVec2::new(p[0], p[1]))
+            .collect()
+    }
+
+    fn is_player_spawn(&self, cell: IVec2) -> bool {
+        self.player_spawns.contains(&[cell.x, cell.y])
+    }
+
+    fn is_enemy_spawn(&self, cell: IVec2) -> bool {
+        self.enemy_spawns.contains(&[cell.x, cell.y])
+    }
+
+    fn walkable(&self, cell: IVec2) -> bool {
+        cell.x >= 0
+            && cell.x < self.width
+            && cell.y >= 0
+            && cell.y < self.height
+            && self.terrain_at(cell) == Terrain::Floor
+    }
 }
 
 #[derive(Resource, Default)]
@@ -130,6 +239,8 @@ pub(super) struct CombatPlugin;
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
+            .init_resource::<PreparationPhase>()
+            .insert_resource(CombatMap::load())
             .init_resource::<SpellBook>()
             .add_systems(Startup, load_spells)
             .init_resource::<TurnOrder>()
@@ -153,6 +264,7 @@ impl Plugin for CombatPlugin {
                     update_combat_spells,
                     update_combat_timeline,
                     finish_if_won,
+                    update_combat_preparation,
                 )
                     .chain()
                     .run_if(in_state(GameMode::Combat)),
@@ -265,7 +377,10 @@ fn enter_combat(
     mut camera: Single<&mut Transform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    map: Res<CombatMap>,
+    mut preparation: ResMut<PreparationPhase>,
 ) {
+    preparation.0 = true;
     session.spell_selected = None;
     session.camera_transform = Some(**camera);
     for mut visibility in &mut world {
@@ -282,48 +397,67 @@ fn enter_combat(
         for z in 0..GRID_H {
             let cell = IVec2::new(x, z);
             let position = cell_to_world(cell);
-            let base_color = if (x + z) & 1 == 0 {
-                Color::srgb(0.30, 0.34, 0.25)
-            } else {
-                Color::srgb(0.39, 0.42, 0.31)
+            let terrain = map.terrain_at(cell);
+            let base_color = match terrain {
+                Terrain::Floor if (x + z) & 1 == 0 => Color::srgb(0.22, 0.23, 0.24),
+                Terrain::Floor => Color::srgb(0.27, 0.28, 0.29),
+                Terrain::Obstacle => Color::srgb(0.24, 0.25, 0.26),
+                Terrain::Hole => Color::srgb(0.055, 0.06, 0.065),
             };
             commands.spawn((
                 CombatObject,
                 DespawnOnExit(GameMode::Combat),
-                CombatTile { cell, base_color },
+                CombatTile {
+                    cell,
+                    base_color,
+                    terrain,
+                },
                 Mesh3d(meshes.add(Cuboid::new(TILE * 0.98, 0.12, TILE * 0.98))),
                 MeshMaterial3d(materials.add(base_color)),
                 Transform::from_translation(position - Vec3::Y * 0.06),
             ));
+            if terrain == Terrain::Obstacle {
+                commands.spawn((
+                    CombatObject,
+                    DespawnOnExit(GameMode::Combat),
+                    Mesh3d(meshes.add(Cuboid::new(TILE * 0.88, 0.55, TILE * 0.88))),
+                    MeshMaterial3d(materials.add(Color::srgb(0.58, 0.59, 0.59))),
+                    Transform::from_translation(position + Vec3::Y * 0.32),
+                ));
+            }
         }
     }
+    let player_cell = map.player_cells()[0];
     turn_order.entities.push(spawn_unit(
         &mut commands,
         &mut meshes,
         &mut materials,
         Team::Player,
-        IVec2::new(1, 2),
+        player_cell,
         100,
         Color::srgb(0.15, 0.38, 0.95),
     ));
-    turn_order.entities.push(spawn_unit(
+    for cell in map.enemy_cells().into_iter().take(2) {
+        turn_order.entities.push(spawn_unit(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Team::Enemy,
+            cell,
+            20,
+            Color::srgb(0.9, 0.06, 0.04),
+        ));
+    }
+    super::hud::spawn_hud_window(
         &mut commands,
-        &mut meshes,
-        &mut materials,
-        Team::Enemy,
-        IVec2::new(6, 1),
-        20,
-        Color::srgb(0.9, 0.06, 0.04),
-    ));
-    turn_order.entities.push(spawn_unit(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Team::Enemy,
-        IVec2::new(6, 4),
-        20,
-        Color::srgb(0.9, 0.06, 0.04),
-    ));
+        "Deployment",
+        KeyCode::KeyD,
+        CombatPreparation,
+        Vec2::new(352.0, 624.0),
+        Vec2::new(576.0, 64.0),
+        "Choose a blue tile, then press Space to begin",
+        16.0,
+    );
     super::hud::spawn_hud_window(
         &mut commands,
         "HP / MP / AP",
@@ -427,6 +561,8 @@ fn combat_input(
     mut session: ResMut<Session>,
     mut turn_order: ResMut<TurnOrder>,
     mut next: ResMut<NextState<GameMode>>,
+    map: Res<CombatMap>,
+    mut preparation: ResMut<PreparationPhase>,
     mut units: Query<(Entity, &mut Unit, &mut Transform)>,
 ) {
     let is_player_turn = turn_order
@@ -435,6 +571,37 @@ fn combat_input(
         .is_some_and(|active| turn_order.entities.first() == Some(active));
     if keyboard.just_pressed(KeyCode::Escape) {
         session.spell_selected = None;
+    }
+    if preparation.0 {
+        if keyboard.just_pressed(KeyCode::Space) {
+            preparation.0 = false;
+            session.spell_selected = None;
+            return;
+        }
+        if mouse.just_pressed(MouseButton::Left)
+            && let Some(cursor) = viewport.cursor
+        {
+            let (camera, transform) = *camera;
+            if let Ok(ray) = camera.viewport_to_world(transform, cursor)
+                && let Some(point) =
+                    ray.plane_intersection_point(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))
+            {
+                let cell = world_to_cell(point);
+                if map.is_player_spawn(cell)
+                    && map.walkable(cell)
+                    && !units
+                        .iter()
+                        .any(|(_, unit, _)| unit.team == Team::Enemy && unit.cell == cell)
+                    && let Some((entity, _, _)) =
+                        units.iter().find(|(_, unit, _)| unit.team == Team::Player)
+                    && let Ok((_, mut unit, mut transform)) = units.get_mut(entity)
+                {
+                    unit.cell = cell;
+                    transform.translation = cell_to_world(cell) + Vec3::Y * 0.85;
+                }
+            }
+        }
+        return;
     }
     if keyboard.just_pressed(KeyCode::Space) && is_player_turn && !turn_order.entities.is_empty() {
         turn_order.active = (turn_order.active + 1) % turn_order.entities.len();
@@ -493,7 +660,11 @@ fn combat_input(
             session.spell_selected = None;
             return;
         };
-        if distance > spell.range || player_ap < spell.ap_cost {
+        if distance > spell.range
+            || player_ap < spell.ap_cost
+            || !map.walkable(cell)
+            || !line_clear(&map, player_cell, cell)
+        {
             return;
         }
         let spell = spell.clone();
@@ -508,6 +679,7 @@ fn combat_input(
             let offset = unit.cell - cell;
             if unit.hp <= 0
                 || !area_contains(&spell.area, offset)
+                || !map.walkable(unit.cell)
                 || !target_matches(spell.target, unit.team)
             {
                 continue;
@@ -531,17 +703,23 @@ fn combat_input(
         }
         return;
     }
-    if distance == 0 || distance > player_mp {
+    if distance == 0 {
         return;
     }
-    if units
+    let occupied = units
         .iter()
-        .any(|(_, unit, _)| unit.hp > 0 && unit.cell == cell)
-    {
+        .filter(|(_, unit, _)| unit.hp > 0 && unit.cell != player_cell)
+        .map(|(_, unit, _)| unit.cell)
+        .collect::<Vec<_>>();
+    let Some(path) = shortest_path(&map, player_cell, cell, &occupied) else {
+        return;
+    };
+    let path_cost = path.len() as i32;
+    if path_cost > player_mp {
         return;
     }
     if let Ok((_, mut player, mut transform)) = units.get_mut(player_entity) {
-        player.mp -= distance;
+        player.mp -= path_cost;
         player.cell = cell;
         transform.translation = cell_to_world(cell) + Vec3::Y * 0.85;
     }
@@ -658,6 +836,8 @@ fn advance_enemy_turn(
 
 fn update_combat_visuals(
     session: Res<Session>,
+    map: Res<CombatMap>,
+    preparation: Res<PreparationPhase>,
     book: Res<SpellBook>,
     turn_order: Res<TurnOrder>,
     viewport: Res<GameViewport>,
@@ -695,7 +875,7 @@ fn update_combat_visuals(
                 .filter(|other| other.hp > 0 && other.cell != unit.cell)
                 .map(|other| other.cell)
                 .collect::<Vec<_>>();
-            reachable_cells(unit.cell, unit.mp, &occupied)
+            reachable_cells(&map, unit.cell, unit.mp, &occupied)
         })
         .unwrap_or_default();
     let player_turn = turn_order
@@ -710,29 +890,29 @@ fn update_combat_visuals(
         let (origin, center) = (player_cell?, hovered_cell?);
         let distance = (center.x - origin.x).abs() + (center.y - origin.y).abs();
         let enough_ap = player_data.is_some_and(|(_, _, ap)| ap >= spell.ap_cost);
-        (player_turn && distance <= spell.range && enough_ap)
-            .then(|| area_cells(&spell.area, center))
+        (player_turn
+            && distance <= spell.range
+            && enough_ap
+            && map.walkable(center)
+            && line_clear(&map, origin, center))
+        .then(|| area_cells(&spell.area, center))
     });
     let mut path = Vec::new();
     if player_turn
         && session.spell_selected.is_none()
         && let (Some(start), Some(end)) = (player_cell, hovered_cell)
     {
-        let distance = (end.x - start.x).abs() + (end.y - start.y).abs();
         let occupied = units
             .iter()
-            .any(|unit| unit.team == Team::Enemy && unit.hp > 0 && unit.cell == end);
+            .filter(|unit| unit.hp > 0 && unit.cell != start)
+            .map(|unit| unit.cell)
+            .collect::<Vec<_>>();
         let player_mp = player_data.map_or(0, |(_, mp, _)| mp);
-        if distance > 0 && distance <= player_mp && !occupied {
-            let mut cell = start;
-            while cell.x != end.x {
-                cell.x += (end.x - cell.x).signum();
-                path.push(cell);
-            }
-            while cell.y != end.y {
-                cell.y += (end.y - cell.y).signum();
-                path.push(cell);
-            }
+        if let Some(found) = shortest_path(&map, start, end, &occupied)
+            && !found.is_empty()
+            && found.len() as i32 <= player_mp
+        {
+            path = found;
         }
     }
     for (unit, material_handle) in &mut appearances {
@@ -757,7 +937,11 @@ fn update_combat_visuals(
         }
     }
     for (tile, material_handle) in &mut tiles {
-        let color = if preview_area
+        let color = if preparation.0 && map.is_player_spawn(tile.cell) {
+            Color::srgba(0.10, 0.42, 0.95, 1.0)
+        } else if preparation.0 && map.is_enemy_spawn(tile.cell) {
+            Color::srgba(0.78, 0.18, 0.20, 1.0)
+        } else if preview_area
             .as_ref()
             .is_some_and(|cells| cells.contains(&tile.cell))
         {
@@ -780,6 +964,10 @@ fn update_combat_visuals(
             Color::srgb(0.20, 0.55, 0.85)
         } else if path.contains(&tile.cell) {
             Color::srgb(0.25, 0.72, 0.35)
+        } else if tile.terrain == Terrain::Obstacle {
+            Color::srgb(0.24, 0.25, 0.26)
+        } else if tile.terrain == Terrain::Hole {
+            Color::srgb(0.055, 0.06, 0.065)
         } else {
             tile.base_color
         };
@@ -791,15 +979,91 @@ fn update_combat_visuals(
     }
 }
 
-fn reachable_cells(origin: IVec2, movement: i32, occupied: &[IVec2]) -> Vec<IVec2> {
-    (0..GRID_W)
-        .flat_map(|x| (0..GRID_H).map(move |y| IVec2::new(x, y)))
+fn shortest_path(
+    map: &CombatMap,
+    origin: IVec2,
+    target: IVec2,
+    occupied: &[IVec2],
+) -> Option<Vec<IVec2>> {
+    use std::collections::{HashMap, VecDeque};
+    if !map.walkable(target) || occupied.contains(&target) {
+        return None;
+    }
+    let mut queue = VecDeque::from([origin]);
+    let mut previous = HashMap::from([(origin, origin)]);
+    while let Some(cell) = queue.pop_front() {
+        if cell == target {
+            break;
+        }
+        for neighbor in [
+            cell + IVec2::X,
+            cell - IVec2::X,
+            cell + IVec2::Y,
+            cell - IVec2::Y,
+        ] {
+            if map.walkable(neighbor)
+                && !occupied.contains(&neighbor)
+                && !previous.contains_key(&neighbor)
+            {
+                previous.insert(neighbor, cell);
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    if !previous.contains_key(&target) {
+        return None;
+    }
+    let mut path = Vec::new();
+    let mut cell = target;
+    while cell != origin {
+        path.push(cell);
+        cell = previous[&cell];
+    }
+    path.reverse();
+    Some(path)
+}
+
+fn reachable_cells(
+    map: &CombatMap,
+    origin: IVec2,
+    movement: i32,
+    occupied: &[IVec2],
+) -> Vec<IVec2> {
+    (0..map.width)
+        .flat_map(|x| (0..map.height).map(move |y| IVec2::new(x, y)))
         .filter(|cell| {
             *cell != origin
-                && (cell.x - origin.x).abs() + (cell.y - origin.y).abs() <= movement
-                && !occupied.contains(cell)
+                && shortest_path(map, origin, *cell, occupied)
+                    .is_some_and(|path| path.len() as i32 <= movement)
         })
         .collect()
+}
+
+fn line_clear(map: &CombatMap, from: IVec2, to: IVec2) -> bool {
+    let steps = (to.x - from.x).abs().max((to.y - from.y).abs());
+    (1..steps).all(|step| {
+        let t = step as f32 / steps as f32;
+        let cell = IVec2::new(
+            (from.x as f32 + (to.x - from.x) as f32 * t).round() as i32,
+            (from.y as f32 + (to.y - from.y) as f32 * t).round() as i32,
+        );
+        map.walkable(cell)
+    })
+}
+
+fn update_combat_preparation(
+    preparation: Res<PreparationPhase>,
+    map: Res<CombatMap>,
+    mut text: Single<&mut Text, With<CombatPreparation>>,
+) {
+    text.0 = if preparation.0 {
+        format!(
+            "{}: choose a blue tile, then press Space to begin",
+            map.name
+        )
+    } else {
+        "Combat started — Space ends your turn".to_owned()
+    };
 }
 
 fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Query<&Unit>) {
@@ -904,10 +1168,22 @@ mod spell_tests {
     }
 
     #[test]
+    fn saved_map_has_valid_deployment_cells_and_obstacles_and_holes_block_paths() {
+        let map = CombatMap::load();
+        assert!(map.player_cells().iter().all(|cell| map.walkable(*cell)));
+        assert!(map.enemy_cells().iter().all(|cell| map.walkable(*cell)));
+        assert!(!map.walkable(IVec2::new(0, 2)));
+        assert!(!map.walkable(IVec2::new(4, 1)));
+        assert!(shortest_path(&map, IVec2::new(2, 3), IVec2::new(1, 3), &[]).is_none());
+        assert!(!line_clear(&map, IVec2::new(3, 1), IVec2::new(1, 1)));
+    }
+
+    #[test]
     fn movement_range_contains_only_unoccupied_cells_within_mp() {
         let origin = IVec2::new(2, 2);
         let occupied = [IVec2::new(3, 2)];
-        let cells = reachable_cells(origin, 2, &occupied);
+        let map = CombatMap::load();
+        let cells = reachable_cells(&map, origin, 2, &occupied);
 
         assert!(!cells.contains(&origin));
         assert!(!cells.contains(&occupied[0]));
