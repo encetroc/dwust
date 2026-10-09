@@ -41,6 +41,7 @@ struct Unit {
     ap: i32,
     physical_damage: i32,
     magical_damage: i32,
+    equipment_modifiers: super::inventory::EquipmentModifiers,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -285,6 +286,7 @@ impl Plugin for CombatPlugin {
             .add_systems(
                 Update,
                 (
+                    update_equipment_stats,
                     combat_input,
                     advance_enemy_turn,
                     update_combat_visuals,
@@ -465,6 +467,7 @@ fn enter_combat(
     mut materials: ResMut<Assets<StandardMaterial>>,
     map: Res<CombatMap>,
     mut preparation: ResMut<PreparationPhase>,
+    equipment: Res<super::inventory::CurrentEquipmentModifiers>,
 ) {
     preparation.0 = true;
     session.spell_selected = None;
@@ -540,6 +543,7 @@ fn enter_combat(
         player_cell,
         100,
         Color::srgb(0.15, 0.38, 0.95),
+        equipment.0,
     ));
     for cell in map.enemy_cells().into_iter().take(2) {
         turn_order.entities.push(spawn_unit(
@@ -550,6 +554,7 @@ fn enter_combat(
             cell,
             20,
             Color::srgb(0.9, 0.06, 0.04),
+            Default::default(),
         ));
     }
     let phase_grid = super::hud_layout::HudGrid::content_sized(
@@ -698,6 +703,7 @@ fn spawn_unit(
     cell: IVec2,
     hp: i32,
     color: Color,
+    equipment_modifiers: super::inventory::EquipmentModifiers,
 ) -> Entity {
     commands
         .spawn((
@@ -706,12 +712,13 @@ fn spawn_unit(
             Unit {
                 team,
                 cell,
-                hp,
-                max_hp: hp,
-                mp: if team == Team::Player { 3 } else { 0 },
-                ap: if team == Team::Player { 6 } else { 0 },
-                physical_damage: 0,
-                magical_damage: 0,
+                hp: hp + equipment_modifiers.max_hp,
+                max_hp: hp + equipment_modifiers.max_hp,
+                mp: (if team == Team::Player { 3 } else { 0 }) + equipment_modifiers.mp,
+                ap: (if team == Team::Player { 6 } else { 0 }) + equipment_modifiers.ap,
+                physical_damage: equipment_modifiers.physical_damage,
+                magical_damage: equipment_modifiers.magical_damage,
+                equipment_modifiers,
             },
             Mesh3d(meshes.add(Sphere::new(0.72).mesh().uv(24, 16))),
             MeshMaterial3d(materials.add(color)),
@@ -1282,6 +1289,31 @@ fn update_combat_preparation(
     };
 }
 
+fn update_equipment_stats(
+    equipment: Res<super::inventory::CurrentEquipmentModifiers>,
+    mut players: Query<&mut Unit>,
+) {
+    for mut unit in &mut players {
+        if unit.team != Team::Player || unit.equipment_modifiers == equipment.0 {
+            continue;
+        }
+        let delta = super::inventory::EquipmentModifiers {
+            max_hp: equipment.0.max_hp - unit.equipment_modifiers.max_hp,
+            mp: equipment.0.mp - unit.equipment_modifiers.mp,
+            ap: equipment.0.ap - unit.equipment_modifiers.ap,
+            physical_damage: equipment.0.physical_damage - unit.equipment_modifiers.physical_damage,
+            magical_damage: equipment.0.magical_damage - unit.equipment_modifiers.magical_damage,
+        };
+        unit.max_hp = (unit.max_hp + delta.max_hp).max(1);
+        unit.hp = (unit.hp + delta.max_hp).clamp(0, unit.max_hp);
+        unit.mp = (unit.mp + delta.mp).max(0);
+        unit.ap = (unit.ap + delta.ap).max(0);
+        unit.physical_damage += delta.physical_damage;
+        unit.magical_damage += delta.magical_damage;
+        unit.equipment_modifiers = equipment.0;
+    }
+}
+
 fn update_combat_stats(mut stats: Query<(&mut Text, &CombatStatCell)>, units: Query<&Unit>) {
     let player = units.iter().find(|unit| unit.team == Team::Player);
     for (mut text, CombatStatCell(stat)) in &mut stats {
@@ -1406,6 +1438,7 @@ mod spell_tests {
             ap: 6,
             physical_damage: 0,
             magical_damage: 0,
+            equipment_modifiers: Default::default(),
         }
     }
 

@@ -127,6 +127,15 @@ impl HudState {
 #[derive(Component)]
 struct StatsPanel;
 
+#[derive(Clone, Copy)]
+enum EquipmentStatValue {
+    Hp,
+    Mp,
+    Ap,
+    PhysicalDamage,
+    MagicalDamage,
+}
+
 #[derive(Component)]
 struct HudWindowContent(Entity);
 
@@ -171,6 +180,7 @@ impl Plugin for HudPlugin {
                     interact_with_hud_context_menu,
                     toggle_hud_windows,
                     sync_hud,
+                    update_equipment_stat_values,
                     save_hud_layout,
                 )
                     .chain(),
@@ -296,15 +306,15 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
     );
     commands.entity(content).with_children(|body| {
         stat_cell(body, "Total HP", Color::srgb(0.36, 0.84, 0.48), 14.0);
-        stat_cell(body, "100", Color::WHITE, 16.0);
+        equipment_stat_cell(body, "100", EquipmentStatValue::Hp);
         stat_cell(body, "Total MP", Color::srgb(0.36, 0.72, 0.96), 14.0);
-        stat_cell(body, "3", Color::WHITE, 16.0);
+        equipment_stat_cell(body, "3", EquipmentStatValue::Mp);
         stat_cell(body, "Total AP", Color::srgb(0.82, 0.58, 0.96), 14.0);
-        stat_cell(body, "6", Color::WHITE, 16.0);
+        equipment_stat_cell(body, "6", EquipmentStatValue::Ap);
         stat_cell(body, "Physical Damage", Color::srgb(0.95, 0.68, 0.30), 14.0);
-        stat_cell(body, "12%", Color::WHITE, 16.0);
+        equipment_stat_cell(body, "12%", EquipmentStatValue::PhysicalDamage);
         stat_cell(body, "Magical Damage", Color::srgb(0.43, 0.68, 0.98), 14.0);
-        stat_cell(body, "8%", Color::WHITE, 16.0);
+        equipment_stat_cell(body, "8%", EquipmentStatValue::MagicalDamage);
         stat_cell(
             body,
             "Physical Defense",
@@ -356,6 +366,43 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
                 ));
             }
         });
+}
+
+fn equipment_stat_cell(parent: &mut ChildSpawnerCommands, text: &str, stat: EquipmentStatValue) {
+    parent.spawn((
+        EquipmentStatValueEntity(stat),
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+    ));
+}
+
+#[derive(Component)]
+struct EquipmentStatValueEntity(EquipmentStatValue);
+
+fn update_equipment_stat_values(
+    equipment: Res<crate::inventory::CurrentEquipmentModifiers>,
+    mut values: Query<(&mut Text, &EquipmentStatValueEntity)>,
+) {
+    if !equipment.is_changed() {
+        return;
+    }
+    for (mut text, EquipmentStatValueEntity(stat)) in &mut values {
+        text.0 = match stat {
+            EquipmentStatValue::Hp => format!("{}", 100 + equipment.0.max_hp),
+            EquipmentStatValue::Mp => format!("{}", 3 + equipment.0.mp),
+            EquipmentStatValue::Ap => format!("{}", 6 + equipment.0.ap),
+            EquipmentStatValue::PhysicalDamage => {
+                format!("{}%", 12 + equipment.0.physical_damage)
+            }
+            EquipmentStatValue::MagicalDamage => {
+                format!("{}%", 8 + equipment.0.magical_damage)
+            }
+        };
+    }
 }
 
 fn stat_cell(parent: &mut ChildSpawnerCommands, text: &str, color: Color, font_size: f32) {

@@ -1,10 +1,13 @@
 use crate::{hud, hud_layout::HudGrid};
 use bevy::prelude::*;
+use serde::Deserialize;
 
 const INVENTORY_KEY: &str = "Inventory";
 const EQUIPMENT_KEY: &str = "Equipment";
 const ABILITY_CELL_SIZE: f32 = 36.0;
 const EQUIPMENT_CELL_SIZE: f32 = ABILITY_CELL_SIZE * 2.0;
+const DOUBLE_CLICK_SECS: f32 = 0.35;
+const EQUIPMENT_PATH: &str = "assets/equipment.json";
 
 #[derive(Component)]
 struct InventoryPanel;
@@ -12,15 +15,147 @@ struct InventoryPanel;
 #[derive(Component)]
 struct EquipmentPanel;
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum EquipmentType {
+    Hat,
+    Cape,
+    Belt,
+    Boots,
+}
+
+impl EquipmentType {
+    fn letter(self) -> &'static str {
+        match self {
+            Self::Hat => "H",
+            Self::Cape => "C",
+            Self::Belt => "B",
+            Self::Boots => "T",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Hat => Color::srgb(0.48, 0.28, 0.72),
+            Self::Cape => Color::srgb(0.78, 0.22, 0.30),
+            Self::Belt => Color::srgb(0.65, 0.43, 0.18),
+            Self::Boots => Color::srgb(0.20, 0.52, 0.58),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub(super) struct EquipmentModifiers {
+    #[serde(default)]
+    pub(super) max_hp: i32,
+    #[serde(default)]
+    pub(super) mp: i32,
+    #[serde(default)]
+    pub(super) ap: i32,
+    #[serde(default)]
+    pub(super) physical_damage: i32,
+    #[serde(default)]
+    pub(super) magical_damage: i32,
+}
+
+impl std::ops::AddAssign for EquipmentModifiers {
+    fn add_assign(&mut self, rhs: Self) {
+        self.max_hp += rhs.max_hp;
+        self.mp += rhs.mp;
+        self.ap += rhs.ap;
+        self.physical_damage += rhs.physical_damage;
+        self.magical_damage += rhs.magical_damage;
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct EquipmentItem {
+    name: String,
+    kind: EquipmentType,
+    letter: String,
+    modifiers: EquipmentModifiers,
+}
+
+#[derive(Resource, Default)]
+struct EquipmentCatalog(Vec<EquipmentItem>);
+
+#[derive(Resource, Default)]
+struct Equipped([Option<usize>; 4]);
+
+#[derive(Resource, Default)]
+pub(super) struct CurrentEquipmentModifiers(pub(super) EquipmentModifiers);
+
+impl Equipped {
+    fn slot(kind: EquipmentType) -> usize {
+        match kind {
+            EquipmentType::Hat => 0,
+            EquipmentType::Cape => 1,
+            EquipmentType::Belt => 2,
+            EquipmentType::Boots => 3,
+        }
+    }
+
+    fn modifiers(&self, catalog: &EquipmentCatalog) -> EquipmentModifiers {
+        self.0
+            .iter()
+            .flatten()
+            .fold(EquipmentModifiers::default(), |mut total, index| {
+                if let Some(item) = catalog.0.get(*index) {
+                    total += item.modifiers;
+                }
+                total
+            })
+    }
+}
+
+#[derive(Component)]
+struct InventoryItemButton(usize);
+
+#[derive(Component)]
+struct InventoryItemLabel(usize);
+
+#[derive(Component)]
+struct EquippedItemIcon(usize);
+
+#[derive(Component)]
+struct EquipmentSlotView;
+
 pub(super) struct InventoryPlugin;
 
 impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_inventory_panels);
+        app.init_resource::<EquipmentCatalog>()
+            .init_resource::<Equipped>()
+            .init_resource::<CurrentEquipmentModifiers>()
+            .add_systems(Startup, (load_equipment, spawn_inventory_panels).chain())
+            .add_systems(
+                Update,
+                (
+                    equip_on_double_click,
+                    unequip_on_double_click,
+                    sync_equipment_views,
+                ),
+            );
     }
 }
 
-fn spawn_inventory_panels(mut commands: Commands, layout: Res<hud::HudLayout>) {
+fn load_equipment(mut catalog: ResMut<EquipmentCatalog>) {
+    let contents = std::fs::read_to_string(EQUIPMENT_PATH)
+        .unwrap_or_else(|error| panic!("failed to read {EQUIPMENT_PATH}: {error}"));
+    catalog.0 = serde_json::from_str(&contents)
+        .unwrap_or_else(|error| panic!("{EQUIPMENT_PATH} must contain valid equipment: {error}"));
+    assert_eq!(
+        catalog.0.len(),
+        8,
+        "equipment.json must define exactly eight items"
+    );
+}
+
+fn spawn_inventory_panels(
+    mut commands: Commands,
+    layout: Res<hud::HudLayout>,
+    catalog: Res<EquipmentCatalog>,
+) {
     let inventory_grid = HudGrid::fixed_cells(5, 10, ABILITY_CELL_SIZE, 8.0, UiRect::all(px(8.0)));
     let (_, inventory_content) = hud::spawn_hud_window(
         &mut commands,
@@ -37,7 +172,36 @@ fn spawn_inventory_panels(mut commands: Commands, layout: Res<hud::HudLayout>) {
     commands
         .entity(inventory_content)
         .with_children(|inventory| {
-            for _ in 0..50 {
+            for (index, item) in catalog.0.iter().enumerate() {
+                inventory
+                    .spawn((
+                        InventoryItemButton(index),
+                        Name::new(item.name.clone()),
+                        Button,
+                        Node {
+                            width: px(ABILITY_CELL_SIZE),
+                            height: px(ABILITY_CELL_SIZE),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(item.kind.color()),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+                    ))
+                    .with_children(|icon| {
+                        icon.spawn((
+                            InventoryItemLabel(index),
+                            Text::new(item.letter.clone()),
+                            TextFont {
+                                font_size: FontSize::Px(18.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+            }
+            for _ in catalog.0.len()..50 {
                 empty_slot(inventory, ABILITY_CELL_SIZE);
             }
         });
@@ -64,8 +228,72 @@ fn spawn_inventory_panels(mut commands: Commands, layout: Res<hud::HudLayout>) {
     commands
         .entity(equipment_content)
         .with_children(|equipment| {
-            for _ in 0..4 {
-                empty_slot(equipment, EQUIPMENT_CELL_SIZE);
+            for kind in [
+                EquipmentType::Hat,
+                EquipmentType::Cape,
+                EquipmentType::Belt,
+                EquipmentType::Boots,
+            ] {
+                equipment
+                    .spawn((
+                        EquipmentSlotView,
+                        Node {
+                            width: px(EQUIPMENT_CELL_SIZE),
+                            height: px(EQUIPMENT_CELL_SIZE),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72)),
+                        BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
+                    ))
+                    .with_children(|slot| {
+                        slot.spawn((
+                            Text::new(kind.letter()),
+                            TextFont {
+                                font_size: FontSize::Px(14.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
+                            Pickable::IGNORE,
+                        ));
+                        for (index, item) in catalog
+                            .0
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, item)| item.kind == kind)
+                        {
+                            slot.spawn((
+                                EquippedItemIcon(index),
+                                Button,
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: px(0),
+                                    top: px(0),
+                                    width: px(EQUIPMENT_CELL_SIZE),
+                                    height: px(EQUIPMENT_CELL_SIZE),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(px(2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(item.kind.color()),
+                                Visibility::Hidden,
+                            ))
+                            .with_children(|icon| {
+                                icon.spawn((
+                                    Text::new(item.letter.clone()),
+                                    TextFont {
+                                        font_size: FontSize::Px(22.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                    Pickable::IGNORE,
+                                ));
+                            });
+                        }
+                    });
             }
         });
 }
@@ -82,4 +310,166 @@ fn empty_slot(parent: &mut ChildSpawnerCommands, size: f32) {
         BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
         Pickable::IGNORE,
     ));
+}
+
+fn equip_on_double_click(
+    time: Res<Time>,
+    catalog: Res<EquipmentCatalog>,
+    mut equipped: ResMut<Equipped>,
+    items: Query<(&Interaction, &InventoryItemButton), Changed<Interaction>>,
+    mut last_click: Local<Option<(usize, f32)>>,
+) {
+    for (interaction, InventoryItemButton(index)) in &items {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let now = time.elapsed_secs();
+        if last_click
+            .is_some_and(|(previous, at)| previous == *index && now - at <= DOUBLE_CLICK_SECS)
+        {
+            if let Some(item) = catalog.0.get(*index) {
+                equipped.0[Equipped::slot(item.kind)] = Some(*index);
+            }
+            *last_click = None;
+        } else {
+            *last_click = Some((*index, now));
+        }
+    }
+}
+
+fn unequip_on_double_click(
+    time: Res<Time>,
+    mut equipped: ResMut<Equipped>,
+    icons: Query<(&Interaction, &EquippedItemIcon), Changed<Interaction>>,
+    mut last_click: Local<Option<(usize, f32)>>,
+) {
+    for (interaction, EquippedItemIcon(index)) in &icons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let now = time.elapsed_secs();
+        if last_click
+            .is_some_and(|(previous, at)| previous == *index && now - at <= DOUBLE_CLICK_SECS)
+        {
+            let Some(slot) = equipped.0.iter_mut().find(|slot| **slot == Some(*index)) else {
+                *last_click = None;
+                continue;
+            };
+            *slot = None;
+            *last_click = None;
+        } else {
+            *last_click = Some((*index, now));
+        }
+    }
+}
+
+fn sync_equipment_views(
+    catalog: Res<EquipmentCatalog>,
+    equipped: Res<Equipped>,
+    mut inventory_items: Query<(&InventoryItemButton, &mut BackgroundColor, &mut BorderColor)>,
+    mut inventory_labels: Query<(&InventoryItemLabel, &mut Visibility), Without<EquippedItemIcon>>,
+    mut icons: Query<
+        (&EquippedItemIcon, &mut Visibility),
+        (Without<InventoryItemButton>, Without<InventoryItemLabel>),
+    >,
+    mut current_modifiers: ResMut<CurrentEquipmentModifiers>,
+) {
+    let modifiers = equipped.modifiers(&catalog);
+    if current_modifiers.0 != modifiers {
+        current_modifiers.0 = modifiers;
+    }
+    if !catalog.is_changed() && !equipped.is_changed() {
+        return;
+    }
+    for (InventoryItemButton(index), mut background, mut border) in &mut inventory_items {
+        let is_equipped = equipped
+            .0
+            .iter()
+            .flatten()
+            .any(|equipped| equipped == index);
+        background.0 = if is_equipped {
+            Color::srgba(0.12, 0.15, 0.20, 0.72)
+        } else {
+            catalog.0[*index].kind.color()
+        };
+        border.set_all(if is_equipped {
+            Color::srgb(0.30, 0.40, 0.52)
+        } else {
+            Color::srgba(1.0, 1.0, 1.0, 0.35)
+        });
+    }
+    for (InventoryItemLabel(index), mut visibility) in &mut inventory_labels {
+        let is_equipped = equipped
+            .0
+            .iter()
+            .flatten()
+            .any(|equipped| equipped == index);
+        *visibility = if is_equipped {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+    for (EquippedItemIcon(index), mut visibility) in &mut icons {
+        let item = &catalog.0[*index];
+        *visibility = if equipped.0[Equipped::slot(item.kind)] == Some(*index) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_catalog() -> EquipmentCatalog {
+        EquipmentCatalog(
+            serde_json::from_str(&std::fs::read_to_string(EQUIPMENT_PATH).unwrap()).unwrap(),
+        )
+    }
+
+    #[test]
+    fn equipment_catalog_has_two_items_per_slot_with_modifiers() {
+        let catalog = load_catalog();
+        assert_eq!(catalog.0.len(), 8);
+        for kind in [
+            EquipmentType::Hat,
+            EquipmentType::Cape,
+            EquipmentType::Belt,
+            EquipmentType::Boots,
+        ] {
+            assert_eq!(catalog.0.iter().filter(|item| item.kind == kind).count(), 2);
+        }
+        assert!(catalog.0.iter().all(|item| {
+            item.modifiers.max_hp != 0
+                || item.modifiers.mp != 0
+                || item.modifiers.ap != 0
+                || item.modifiers.physical_damage != 0
+                || item.modifiers.magical_damage != 0
+        }));
+    }
+
+    #[test]
+    fn replacing_a_slot_replaces_its_modifiers_instead_of_stacking() {
+        let catalog = load_catalog();
+        let first_hat = catalog
+            .0
+            .iter()
+            .position(|item| item.kind == EquipmentType::Hat)
+            .unwrap();
+        let second_hat = catalog
+            .0
+            .iter()
+            .rposition(|item| item.kind == EquipmentType::Hat)
+            .unwrap();
+        let mut equipped = Equipped::default();
+        equipped.0[Equipped::slot(EquipmentType::Hat)] = Some(first_hat);
+        let first = equipped.modifiers(&catalog);
+        equipped.0[Equipped::slot(EquipmentType::Hat)] = Some(second_hat);
+        let replaced = equipped.modifiers(&catalog);
+        assert_eq!(replaced, catalog.0[second_hat].modifiers);
+        assert_ne!(first, replaced);
+    }
 }

@@ -1,0 +1,10 @@
+[
+  { "name": "Copper Circlet", "kind": "hat", "letter": "C", "modifiers": { "max_hp": 12, "mp": 1, "magical_damage": 6 } },
+  { "name": "Wayfarer's Hood", "kind": "hat", "letter": "W", "modifiers": { "max_hp": 6, "ap": 1, "physical_damage": 4 } },
+  { "name": "Ember Mantle", "kind": "cape", "letter": "E", "modifiers": { "max_hp": 8, "magical_damage": 10 } },
+  { "name": "Ranger's Cloak", "kind": "cape", "letter": "R", "modifiers": { "mp": 2, "physical_damage": 7 } },
+  { "name": "Ironbound Sash", "kind": "belt", "letter": "I", "modifiers": { "max_hp": 18, "ap": 1 } },
+  { "name": "Sage's Girdle", "kind": "belt", "letter": "S", "modifiers": { "mp": 2, "magical_damage": 8 } },
+  { "name": "Swiftstep Boots", "kind": "boots", "letter": "F", "modifiers": { "ap": 1, "physical_damage": 5 } },
+  { "name": "Stonewalkers", "kind": "boots", "letter": "T", "modifiers": { "max_hp": 10, "mp": 1, "magical_damage": 4 } }
+]
