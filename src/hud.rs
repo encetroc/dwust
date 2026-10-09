@@ -130,7 +130,7 @@ pub(super) fn spawn_hud_window<C: Component>(
     size: Vec2,
     content: &str,
     font_size: f32,
-) {
+) -> Entity {
     let size = snap_hud_size(size);
     let position = constrain_hud_position(position, size);
     let entity = commands
@@ -182,6 +182,7 @@ pub(super) fn spawn_hud_window<C: Component>(
             },
         ));
     });
+    entity
 }
 
 fn load_hud_layout(mut layout: ResMut<HudLayout>) {
@@ -240,10 +241,16 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
                     ..default()
                 })
                 .with_children(|body| {
-                    stat_row(body, "Current HP", "100", Color::srgb(0.36, 0.84, 0.48));
                     stat_row(body, "Total HP", "100", Color::srgb(0.36, 0.84, 0.48));
-                    stat_row(body, "PD", "12", Color::srgb(0.95, 0.68, 0.30));
-                    stat_row(body, "MD", "8", Color::srgb(0.43, 0.68, 0.98));
+                    stat_row(
+                        body,
+                        "Physical Damage",
+                        "12%",
+                        Color::srgb(0.95, 0.68, 0.30),
+                    );
+                    stat_row(body, "Magical Damage", "8%", Color::srgb(0.43, 0.68, 0.98));
+                    stat_row(body, "Physical Defense", "0", Color::srgb(0.72, 0.76, 0.82));
+                    stat_row(body, "Magical Defense", "0", Color::srgb(0.72, 0.76, 0.82));
                 });
         });
 

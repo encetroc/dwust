@@ -237,6 +237,9 @@ struct CombatSpells;
 #[derive(Component)]
 struct CombatTimeline;
 
+#[derive(Component)]
+struct TimelineHealthBar(Entity);
+
 pub(super) struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
@@ -441,9 +444,9 @@ fn enter_combat(
                 commands.spawn((
                     CombatObject,
                     DespawnOnExit(GameMode::Combat),
-                    Mesh3d(meshes.add(Cuboid::new(TILE * 0.88, 0.55, TILE * 0.88))),
+                    Mesh3d(meshes.add(Cuboid::new(TILE * 1.01, 0.55, TILE * 1.01))),
                     MeshMaterial3d(materials.add(Color::srgb(0.58, 0.59, 0.59))),
-                    Transform::from_translation(position + Vec3::Y * 0.32),
+                    Transform::from_translation(position + Vec3::Y * 0.275),
                 ));
             }
         }
@@ -499,16 +502,45 @@ fn enter_combat(
         "",
         16.0,
     );
-    super::hud::spawn_hud_window(
+    let timeline_window = super::hud::spawn_hud_window(
         &mut commands,
         "Timeline",
         KeyCode::KeyT,
         CombatTimeline,
         Vec2::new(16.0, 416.0),
-        Vec2::new(160.0, 80.0),
+        Vec2::new(224.0, 144.0),
         "",
         16.0,
     );
+    commands.entity(timeline_window).with_children(|window| {
+        for (index, unit) in turn_order.entities.iter().copied().enumerate() {
+            window
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(12),
+                        top: px(28 + index as i32 * 40),
+                        width: px(184),
+                        height: px(7),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
+                    Pickable::IGNORE,
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        TimelineHealthBar(unit),
+                        Node {
+                            width: percent(100),
+                            height: percent(100),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
+                        Pickable::IGNORE,
+                    ));
+                });
+        }
+    });
 }
 
 fn spawn_unit(
@@ -1141,7 +1173,22 @@ fn update_combat_timeline(
     turn_order: Res<TurnOrder>,
     units: Query<&Unit>,
     mut timeline: Single<&mut Text, With<CombatTimeline>>,
+    mut health_bars: Query<(&mut Node, &TimelineHealthBar)>,
 ) {
+    for (mut node, TimelineHealthBar(entity)) in &mut health_bars {
+        let Ok(unit) = units.get(*entity) else {
+            node.width = percent(0);
+            continue;
+        };
+        let max_hp = unit.max_hp.max(0);
+        let ratio = if max_hp == 0 {
+            0.0
+        } else {
+            unit.hp.clamp(0, max_hp) as f32 / max_hp as f32
+        };
+        node.width = percent(ratio * 100.0);
+    }
+
     let entries = turn_order
         .entities
         .iter()
@@ -1158,14 +1205,17 @@ fn update_combat_timeline(
             } else {
                 "Entity"
             };
-            Some(if index == turn_order.active {
-                format!("[* {label}]")
+            let current_hp = unit.hp.clamp(0, unit.max_hp.max(0));
+            let max_hp = unit.max_hp.max(0);
+            let name = if index == turn_order.active {
+                format!("> {label}")
             } else {
-                format!("  {label}  ")
-            })
+                format!("  {label}")
+            };
+            Some(format!("{name}  {current_hp}/{max_hp}"))
         })
         .collect::<Vec<_>>();
-    timeline.0 = entries.join("\n");
+    timeline.0 = entries.join("\n\n");
 }
 
 fn finish_if_won(units: Query<&Unit, With<CombatObject>>, mut next: ResMut<NextState<GameMode>>) {

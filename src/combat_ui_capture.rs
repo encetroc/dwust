@@ -114,8 +114,8 @@ fn capture_combat_ui(
     }
     assert_eq!(
         modules.iter().count(),
-        4,
-        "expected all four combat modules including deployment status"
+        5,
+        "expected the four combat modules and the shared stats panel"
     );
     state.pending = true;
     let output = state.output.clone();
