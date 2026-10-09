@@ -687,6 +687,17 @@ fn update_combat_visuals(
     }
     let hovered_unit =
         hovered_cell.filter(|cell| units.iter().any(|unit| unit.hp > 0 && unit.cell == *cell));
+    let movement_range = hovered_unit
+        .and_then(|cell| units.iter().find(|unit| unit.hp > 0 && unit.cell == cell))
+        .map(|unit| {
+            let occupied = units
+                .iter()
+                .filter(|other| other.hp > 0 && other.cell != unit.cell)
+                .map(|other| other.cell)
+                .collect::<Vec<_>>();
+            reachable_cells(unit.cell, unit.mp, &occupied)
+        })
+        .unwrap_or_default();
     let player_turn = turn_order
         .entities
         .get(turn_order.active)
@@ -753,6 +764,8 @@ fn update_combat_visuals(
             Color::srgb(0.95, 0.35, 0.18)
         } else if hovered_unit == Some(tile.cell) {
             Color::srgb(1.0, 0.78, 0.12)
+        } else if movement_range.contains(&tile.cell) {
+            Color::srgb(0.20, 0.72, 0.32)
         } else if player_turn
             && session.spell_selected.is_some_and(|index| {
                 book.0.get(index).is_some_and(|spell| {
@@ -776,6 +789,17 @@ fn update_combat_visuals(
             material.base_color = color;
         }
     }
+}
+
+fn reachable_cells(origin: IVec2, movement: i32, occupied: &[IVec2]) -> Vec<IVec2> {
+    (0..GRID_W)
+        .flat_map(|x| (0..GRID_H).map(move |y| IVec2::new(x, y)))
+        .filter(|cell| {
+            *cell != origin
+                && (cell.x - origin.x).abs() + (cell.y - origin.y).abs() <= movement
+                && !occupied.contains(cell)
+        })
+        .collect()
 }
 
 fn update_combat_stats(mut stats: Single<&mut Text, With<CombatStats>>, units: Query<&Unit>) {
@@ -831,26 +855,23 @@ fn update_combat_timeline(
         .entities
         .iter()
         .enumerate()
-        .map(|(index, entity)| {
+        .filter_map(|(index, entity)| {
+            let unit = units.get(*entity).ok()?;
+            if unit.team == Team::Enemy && unit.hp <= 0 {
+                return None;
+            }
             let label = if index == 0 {
                 "Player"
+            } else if unit.team == Team::Enemy {
+                if index == 1 { "Enemy 1" } else { "Enemy 2" }
             } else {
-                match units.get(*entity).map(|unit| unit.team) {
-                    Ok(Team::Enemy) => {
-                        if index == 1 {
-                            "Enemy 1"
-                        } else {
-                            "Enemy 2"
-                        }
-                    }
-                    _ => "Entity",
-                }
+                "Entity"
             };
-            if index == turn_order.active {
+            Some(if index == turn_order.active {
                 format!("[* {label}]")
             } else {
                 format!("  {label}  ")
-            }
+            })
         })
         .collect::<Vec<_>>();
     timeline.0 = entries.join("\n");
@@ -880,6 +901,23 @@ mod spell_tests {
             physical_damage: 0,
             magical_damage: 0,
         }
+    }
+
+    #[test]
+    fn movement_range_contains_only_unoccupied_cells_within_mp() {
+        let origin = IVec2::new(2, 2);
+        let occupied = [IVec2::new(3, 2)];
+        let cells = reachable_cells(origin, 2, &occupied);
+
+        assert!(!cells.contains(&origin));
+        assert!(!cells.contains(&occupied[0]));
+        assert!(cells.contains(&IVec2::new(2, 4)));
+        assert!(!cells.contains(&IVec2::new(5, 2)));
+        assert!(
+            cells
+                .iter()
+                .all(|cell| { (cell.x - origin.x).abs() + (cell.y - origin.y).abs() <= 2 })
+        );
     }
 
     #[test]

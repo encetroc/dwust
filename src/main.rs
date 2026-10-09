@@ -193,7 +193,7 @@ impl Plugin for GamePlugin {
             .add_systems(PreUpdate, sync_viewport)
             .add_systems(
                 Update,
-                (set_destination, move_player, free_roam_input, follow_player)
+                (set_destination, move_player, follow_player)
                     .chain()
                     .run_if(in_state(combat::GameMode::World)),
             );
@@ -574,36 +574,6 @@ fn set_destination(
             player.destination = Some(Vec3::new(point.x, PLAYER_HEIGHT / 2.0, point.z));
         }
     }
-}
-
-#[allow(clippy::type_complexity)]
-fn free_roam_input(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    time: Res<Time>,
-    settings: Res<MovementSettings>,
-    mut player: Single<(&mut Transform, &mut Player)>,
-) {
-    let mut direction = Vec3::ZERO;
-    if keyboard.pressed(KeyCode::ArrowUp) || keyboard.pressed(KeyCode::KeyW) {
-        direction += SCREEN_UP;
-    }
-    if keyboard.pressed(KeyCode::ArrowDown) || keyboard.pressed(KeyCode::KeyS) {
-        direction -= SCREEN_UP;
-    }
-    if keyboard.pressed(KeyCode::ArrowRight) || keyboard.pressed(KeyCode::KeyD) {
-        direction += SCREEN_RIGHT;
-    }
-    if keyboard.pressed(KeyCode::ArrowLeft) || keyboard.pressed(KeyCode::KeyA) {
-        direction -= SCREEN_RIGHT;
-    }
-    if direction == Vec3::ZERO {
-        return;
-    }
-    let (transform, player) = &mut *player;
-    transform.translation += direction.normalize() * settings.speed * time.delta_secs();
-    player.destination = None;
-    player.path.clear();
-    player.approach_enemy = None;
 }
 
 fn follow_player(
