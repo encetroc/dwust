@@ -48,34 +48,19 @@ impl HudLayout {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct HudState {
-    pub(super) position: Vec2,
-    pub(super) visible: bool,
-    dragging: bool,
+    cursor_bounds: Vec<Rect>,
     suppress_world_click: bool,
-    drag_offset: Vec2,
 }
 
 impl HudState {
     pub(super) fn contains_cursor(&self, cursor: Vec2) -> bool {
-        (self.visible || self.suppress_world_click)
-            && cursor.x >= self.position.x
-            && cursor.x <= self.position.x + PANEL_WIDTH
-            && cursor.y >= self.position.y
-            && cursor.y <= self.position.y + PANEL_HEIGHT
-    }
-}
-
-impl Default for HudState {
-    fn default() -> Self {
-        Self {
-            position: Vec2::splat(SNAP),
-            visible: true,
-            dragging: false,
-            suppress_world_click: false,
-            drag_offset: Vec2::ZERO,
-        }
+        self.suppress_world_click
+            || self
+                .cursor_bounds
+                .iter()
+                .any(|bounds| bounds.contains(cursor))
     }
 }
 
@@ -83,7 +68,7 @@ impl Default for HudState {
 struct StatsPanel;
 
 #[derive(Component)]
-struct CloseStats;
+struct HudContextMenu;
 
 #[derive(Component)]
 struct CloseHudWindow(Entity);
@@ -93,7 +78,8 @@ pub(super) struct HudWindow {
     key: String,
     position: Vec2,
     size: Vec2,
-    hotkey: KeyCode,
+    hotkey: Option<KeyCode>,
+    visible: bool,
     dragging: bool,
     drag_offset: Vec2,
 }
@@ -113,8 +99,6 @@ fn constrain_hud_position(position: Vec2, size: Vec2) -> Vec2 {
         * SNAP
 }
 
-type StatsPanelFilter = (With<StatsPanel>, Without<SnapGrid>);
-
 pub(super) struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -125,10 +109,9 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_stats,
                     restore_hud_window_positions,
-                    interact_with_hud,
                     interact_with_hud_windows,
+                    interact_with_hud_context_menu,
                     toggle_hud_windows,
                     sync_hud,
                     save_hud_layout,
@@ -155,9 +138,10 @@ pub(super) fn spawn_hud_window<C: Component>(
             DespawnOnExit(crate::combat::GameMode::Combat),
             HudWindow {
                 key: title.to_owned(),
-                hotkey,
+                hotkey: Some(hotkey),
                 position,
                 size,
+                visible: true,
                 dragging: false,
                 drag_offset: Vec2::ZERO,
             },
@@ -179,32 +163,6 @@ pub(super) fn spawn_hud_window<C: Component>(
         ))
         .id();
     commands.entity(entity).with_children(|window| {
-        window
-            .spawn((
-                CloseHudWindow(entity),
-                Button,
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(2),
-                    top: px(2),
-                    width: px(16),
-                    height: px(16),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
-            ))
-            .with_children(|button| {
-                button.spawn((
-                    Text::new("x"),
-                    TextFont {
-                        font_size: FontSize::Px(11.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ));
-            });
         window.spawn((
             content_marker,
             Text::new(content.to_owned()),
@@ -226,7 +184,7 @@ pub(super) fn spawn_hud_window<C: Component>(
     });
 }
 
-fn load_hud_layout(mut state: ResMut<HudState>, mut layout: ResMut<HudLayout>) {
+fn load_hud_layout(mut layout: ResMut<HudLayout>) {
     match std::fs::read_to_string(HUD_LAYOUT_PATH) {
         Ok(contents) => match serde_json::from_str::<HudLayout>(&contents) {
             Ok(saved) => *layout = saved,
@@ -237,20 +195,30 @@ fn load_hud_layout(mut state: ResMut<HudState>, mut layout: ResMut<HudLayout>) {
         }
         Err(_) => {}
     }
-    if let Some(position) = layout.position(STATS_KEY) {
-        state.position = constrain_hud_position(position, Vec2::new(PANEL_WIDTH, PANEL_HEIGHT));
-    }
-    state.visible = layout.visible(STATS_KEY);
 }
 
-fn setup_hud(mut commands: Commands, state: Res<HudState>) {
+fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
+    let position = constrain_hud_position(
+        layout.position(STATS_KEY).unwrap_or(Vec2::splat(SNAP)),
+        Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
+    );
+    let visible = layout.visible(STATS_KEY);
     commands
         .spawn((
             StatsPanel,
+            HudWindow {
+                key: STATS_KEY.to_owned(),
+                position,
+                size: Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
+                hotkey: Some(KeyCode::KeyS),
+                visible,
+                dragging: false,
+                drag_offset: Vec2::ZERO,
+            },
             Node {
                 position_type: PositionType::Absolute,
-                left: px(state.position.x),
-                top: px(state.position.y),
+                left: px(position.x),
+                top: px(position.y),
                 width: px(PANEL_WIDTH),
                 height: px(PANEL_HEIGHT),
                 flex_direction: FlexDirection::Column,
@@ -260,34 +228,10 @@ fn setup_hud(mut commands: Commands, state: Res<HudState>) {
             BackgroundColor(Color::srgba(0.055, 0.075, 0.11, 0.96)),
             BorderColor::all(Color::srgb(0.30, 0.44, 0.58)),
             ZIndex(20),
+            Visibility::Visible,
+            Pickable::IGNORE,
         ))
         .with_children(|panel| {
-            panel
-                .spawn((
-                    CloseStats,
-                    Button,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: px(2),
-                        top: px(2),
-                        width: px(16),
-                        height: px(16),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.35, 0.16, 0.18)),
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("x"),
-                        TextFont {
-                            font_size: FontSize::Px(11.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
             panel
                 .spawn(Node {
                     padding: UiRect::all(px(12)),
@@ -373,78 +317,19 @@ fn stat_row(parent: &mut ChildSpawnerCommands, label: &str, value: &str, color: 
         });
 }
 
-fn toggle_stats(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mode: Res<State<crate::combat::GameMode>>,
-    mut state: ResMut<HudState>,
-) {
-    if *mode.get() == crate::combat::GameMode::World && keyboard.just_pressed(KeyCode::KeyS) {
-        state.visible = !state.visible;
-        state.dragging = false;
-    }
-}
-
-fn interact_with_hud(
-    mouse: Res<ButtonInput<MouseButton>>,
-    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    mut state: ResMut<HudState>,
-    close_buttons: Query<&Interaction, (Changed<Interaction>, With<CloseStats>)>,
-) {
-    state.suppress_world_click = false;
-    if close_buttons
-        .iter()
-        .any(|interaction| *interaction == Interaction::Pressed)
-    {
-        state.visible = false;
-        state.suppress_world_click = true;
-        state.dragging = false;
-    }
-    let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
-        if mouse.just_released(MouseButton::Left) {
-            state.dragging = false;
-        }
-        return;
-    };
-
-    if mouse.just_pressed(MouseButton::Left) && state.visible {
-        let local = cursor - state.position;
-        if local.x >= 0.0 && local.x <= PANEL_WIDTH && local.y >= 0.0 && local.y <= PANEL_HEIGHT {
-            state.dragging = true;
-            state.drag_offset = local;
-        }
-    }
-    if mouse.just_released(MouseButton::Left) {
-        state.dragging = false;
-    }
-    if state.dragging && mouse.pressed(MouseButton::Left) {
-        state.position = constrain_hud_position(
-            cursor - state.drag_offset,
-            Vec2::new(PANEL_WIDTH, PANEL_HEIGHT),
-        );
-    }
-}
-
 fn interact_with_hud_windows(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    close_buttons: Query<(&Interaction, &CloseHudWindow), Changed<Interaction>>,
-    mut windows: Query<(Entity, &mut HudWindow, &mut Node, &mut Visibility)>,
+    mut windows: Query<(&mut HudWindow, &mut Node, &Visibility)>,
 ) {
-    let closed = close_buttons
-        .iter()
-        .filter_map(|(interaction, close)| {
-            (*interaction == Interaction::Pressed).then_some(close.0)
-        })
-        .collect::<Vec<_>>();
     let cursor = window.and_then(|window| window.cursor_position());
-    for (entity, mut hud_window, mut node, mut visibility) in &mut windows {
-        if closed.contains(&entity) {
-            hud_window.dragging = false;
-            visibility.set_if_neq(Visibility::Hidden);
-            continue;
-        }
+    for (mut hud_window, mut node, visibility) in &mut windows {
         if mouse.just_released(MouseButton::Left) || cursor.is_none() {
             hud_window.dragging = false;
+        }
+        if *visibility != Visibility::Visible {
+            hud_window.dragging = false;
+            continue;
         }
         let Some(cursor) = cursor else { continue };
         if mouse.just_pressed(MouseButton::Left) {
@@ -453,7 +338,6 @@ fn interact_with_hud_windows(
                 && local.x <= hud_window.size.x
                 && local.y >= 0.0
                 && local.y <= hud_window.size.y
-                && !(local.x >= hud_window.size.x - 20.0 && local.y <= 20.0)
             {
                 hud_window.dragging = true;
                 hud_window.drag_offset = local;
@@ -468,16 +352,120 @@ fn interact_with_hud_windows(
     }
 }
 
+fn interact_with_hud_context_menu(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+    mut state: ResMut<HudState>,
+    mut windows: Query<(Entity, &mut HudWindow, &Visibility)>,
+    menus: Query<Entity, With<HudContextMenu>>,
+    close_buttons: Query<(&Interaction, &CloseHudWindow), Changed<Interaction>>,
+) {
+    state.suppress_world_click =
+        menus.iter().next().is_some() && mouse.just_pressed(MouseButton::Left);
+    let closed = close_buttons
+        .iter()
+        .filter_map(|(interaction, close)| {
+            (*interaction == Interaction::Pressed).then_some(close.0)
+        })
+        .collect::<Vec<_>>();
+    for entity in closed {
+        if let Ok((_, mut hud_window, _)) = windows.get_mut(entity) {
+            hud_window.visible = false;
+            hud_window.dragging = false;
+            state.suppress_world_click = true;
+        }
+    }
+
+    let cursor = window.and_then(|window| window.cursor_position());
+    let mut opened_menu = false;
+    if mouse.just_pressed(MouseButton::Right)
+        && let Some(cursor) = cursor
+    {
+        let target = windows.iter().find_map(|(entity, hud_window, visibility)| {
+            let inside = cursor.x >= hud_window.position.x
+                && cursor.x <= hud_window.position.x + hud_window.size.x
+                && cursor.y >= hud_window.position.y
+                && cursor.y <= hud_window.position.y + hud_window.size.y;
+            (inside && hud_window.visible && *visibility == Visibility::Visible).then_some(entity)
+        });
+        if let Some(target) = target {
+            for menu in &menus {
+                commands.entity(menu).despawn();
+            }
+            commands
+                .spawn((
+                    HudContextMenu,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(cursor.x.min(WINDOW_WIDTH as f32 - 96.0)),
+                        top: px(cursor.y.min(WINDOW_HEIGHT as f32 - 32.0)),
+                        width: px(96),
+                        height: px(32),
+                        align_items: AlignItems::Center,
+                        padding: UiRect::horizontal(px(10)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.12, 0.15, 0.20)),
+                    BorderColor::all(Color::srgb(0.42, 0.52, 0.64)),
+                    ZIndex(100),
+                ))
+                .with_children(|menu| {
+                    menu.spawn((
+                        CloseHudWindow(target),
+                        Button,
+                        Node {
+                            width: percent(100),
+                            height: percent(100),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Close"),
+                            TextFont {
+                                font_size: FontSize::Px(14.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+            opened_menu = true;
+        }
+    }
+    if !opened_menu
+        && (mouse.just_pressed(MouseButton::Left)
+            || mouse.just_pressed(MouseButton::Right)
+            || keyboard.just_pressed(KeyCode::Escape))
+    {
+        for menu in &menus {
+            commands.entity(menu).despawn();
+        }
+    }
+}
+
 fn toggle_hud_windows(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut windows: Query<(&HudWindow, &mut Visibility)>,
+    mode: Res<State<crate::combat::GameMode>>,
+    mut windows: Query<(&mut HudWindow, &mut Visibility, Option<&StatsPanel>)>,
 ) {
-    for (window, mut visibility) in &mut windows {
-        if keyboard.just_pressed(window.hotkey) {
-            visibility.set_if_neq(if *visibility == Visibility::Visible {
-                Visibility::Hidden
-            } else {
+    for (mut window, mut visibility, stats_panel) in &mut windows {
+        let allowed = stats_panel.is_none() || *mode.get() == crate::combat::GameMode::World;
+        if allowed
+            && window
+                .hotkey
+                .is_some_and(|hotkey| keyboard.just_pressed(hotkey))
+        {
+            window.visible = !window.visible;
+            window.dragging = false;
+            visibility.set_if_neq(if window.visible {
                 Visibility::Visible
+            } else {
+                Visibility::Hidden
             });
         }
     }
@@ -488,7 +476,8 @@ fn restore_hud_window_positions(
     mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Added<HudWindow>>,
 ) {
     for (mut window, mut node, mut visibility) in &mut windows {
-        visibility.set_if_neq(if layout.visible(&window.key) {
+        window.visible = layout.visible(&window.key);
+        visibility.set_if_neq(if window.visible {
             Visibility::Visible
         } else {
             Visibility::Hidden
@@ -501,19 +490,14 @@ fn restore_hud_window_positions(
     }
 }
 
-fn save_hud_layout(
-    state: Res<HudState>,
-    windows: Query<(&HudWindow, &Visibility)>,
-    mut layout: ResMut<HudLayout>,
-) {
-    if state.dragging || windows.iter().any(|(window, _)| window.dragging) {
+fn save_hud_layout(windows: Query<&HudWindow>, mut layout: ResMut<HudLayout>) {
+    if windows.iter().any(|window| window.dragging) {
         return;
     }
-    let mut changed = layout.set_position(STATS_KEY, state.position);
-    changed |= layout.set_visible(STATS_KEY, state.visible);
-    for (window, visibility) in &windows {
+    let mut changed = false;
+    for window in &windows {
         changed |= layout.set_position(&window.key, window.position);
-        changed |= layout.set_visible(&window.key, *visibility == Visibility::Visible);
+        changed |= layout.set_visible(&window.key, window.visible);
     }
     if changed {
         match serde_json::to_string_pretty(&*layout)
@@ -527,23 +511,40 @@ fn save_hud_layout(
 }
 
 fn sync_hud(
-    state: Res<HudState>,
-    mut panel: Single<(&mut Node, &mut Visibility), StatsPanelFilter>,
-    mut grid: Single<&mut Node, (With<SnapGrid>, Without<StatsPanel>)>,
+    mut state: ResMut<HudState>,
+    mut grid: Single<&mut Node, With<SnapGrid>>,
     mode: Res<State<crate::combat::GameMode>>,
-    windows: Query<&HudWindow>,
+    mut windows: Query<
+        (
+            &mut HudWindow,
+            &mut Node,
+            &mut Visibility,
+            Option<&StatsPanel>,
+        ),
+        Without<SnapGrid>,
+    >,
 ) {
-    let (node, visibility) = &mut *panel;
-    visibility.set_if_neq(
-        if state.visible && *mode.get() == crate::combat::GameMode::World {
+    state.cursor_bounds.clear();
+    let mut dragging = false;
+    for (window, mut node, mut visibility, stats_panel) in &mut windows {
+        let active = window.visible
+            && (stats_panel.is_none() || *mode.get() == crate::combat::GameMode::World);
+        visibility.set_if_neq(if active {
             Visibility::Visible
         } else {
             Visibility::Hidden
-        },
-    );
-    node.left = px(state.position.x);
-    node.top = px(state.position.y);
-    grid.display = if state.dragging || windows.iter().any(|window| window.dragging) {
+        });
+        node.left = px(window.position.x);
+        node.top = px(window.position.y);
+        if active {
+            state.cursor_bounds.push(Rect::from_corners(
+                window.position,
+                window.position + window.size,
+            ));
+        }
+        dragging |= window.dragging;
+    }
+    grid.display = if dragging {
         Display::Grid
     } else {
         Display::None
@@ -581,13 +582,18 @@ mod tests {
     }
 
     #[test]
-    fn closing_stats_still_consumes_the_close_click_for_world_movement() {
+    fn closing_any_hud_panel_consumes_the_close_click_for_world_movement() {
         let mut state = HudState::default();
-        state.visible = false;
-        state.suppress_world_click = true;
+        state.cursor_bounds.push(Rect::from_corners(
+            Vec2::new(32.0, 48.0),
+            Vec2::new(32.0 + PANEL_WIDTH, 48.0 + PANEL_HEIGHT),
+        ));
 
-        assert!(state.contains_cursor(state.position + Vec2::new(8.0, 8.0)));
-        assert!(!state.contains_cursor(state.position + Vec2::new(PANEL_WIDTH + 1.0, 8.0)));
+        assert!(state.contains_cursor(Vec2::new(40.0, 56.0)));
+        assert!(!state.contains_cursor(Vec2::new(16.0, 16.0)));
+        state.cursor_bounds.clear();
+        state.suppress_world_click = true;
+        assert!(state.contains_cursor(Vec2::new(16.0, 16.0)));
     }
 
     #[test]

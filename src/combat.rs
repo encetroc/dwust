@@ -110,6 +110,9 @@ struct CombatTile {
 }
 
 #[derive(Component)]
+struct MovementRangeTile(IVec2);
+
+#[derive(Component)]
 struct CombatPreparation;
 
 #[derive(Resource, Default)]
@@ -390,6 +393,15 @@ fn enter_combat(
     let camera_focus = Vec3::ZERO;
     **camera = Transform::from_xyz(16.0, 22.0, 18.0).looking_at(camera_focus, Vec3::Y);
 
+    let movement_range_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.20, 0.72, 0.32, 0.45),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        // Keep the overlay at the grid surface while making it pass the depth
+        // test in front of units and terrain props.
+        depth_bias: 10_000.0,
+        ..default()
+    });
     turn_order.entities.clear();
     turn_order.active = 0;
     enemy_turn_delay.0.reset();
@@ -415,6 +427,15 @@ fn enter_combat(
                 Mesh3d(meshes.add(Cuboid::new(TILE * 0.98, 0.12, TILE * 0.98))),
                 MeshMaterial3d(materials.add(base_color)),
                 Transform::from_translation(position - Vec3::Y * 0.06),
+            ));
+            commands.spawn((
+                CombatObject,
+                DespawnOnExit(GameMode::Combat),
+                MovementRangeTile(cell),
+                Mesh3d(meshes.add(Cuboid::new(TILE * 0.94, 0.025, TILE * 0.94))),
+                MeshMaterial3d(movement_range_material.clone()),
+                Transform::from_translation(position + Vec3::Y * 0.02),
+                Visibility::Hidden,
             ));
             if terrain == Terrain::Obstacle {
                 commands.spawn((
@@ -844,6 +865,7 @@ fn update_combat_visuals(
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     units: Query<&Unit>,
     mut tiles: Query<(&CombatTile, &MeshMaterial3d<StandardMaterial>)>,
+    mut movement_tiles: Query<(&MovementRangeTile, &mut Visibility)>,
     mut appearances: Query<(&Unit, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -936,6 +958,13 @@ fn update_combat_visuals(
             material.base_color = color;
         }
     }
+    for (tile, mut visibility) in &mut movement_tiles {
+        *visibility = if movement_range.contains(&tile.0) {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
     for (tile, material_handle) in &mut tiles {
         let color = if preparation.0 && map.is_player_spawn(tile.cell) {
             Color::srgba(0.10, 0.42, 0.95, 1.0)
@@ -948,8 +977,6 @@ fn update_combat_visuals(
             Color::srgb(0.95, 0.35, 0.18)
         } else if hovered_unit == Some(tile.cell) {
             Color::srgb(1.0, 0.78, 0.12)
-        } else if movement_range.contains(&tile.cell) {
-            Color::srgb(0.20, 0.72, 0.32)
         } else if player_turn
             && session.spell_selected.is_some_and(|index| {
                 book.0.get(index).is_some_and(|spell| {
