@@ -120,6 +120,12 @@ struct EquippedItemIcon(usize);
 #[derive(Component)]
 struct EquipmentSlotView;
 
+#[derive(Component)]
+struct EquipmentItemContextMenu;
+
+#[derive(Component)]
+struct EquipmentItemInfoAction(usize);
+
 pub(super) struct InventoryPlugin;
 
 impl Plugin for InventoryPlugin {
@@ -133,6 +139,8 @@ impl Plugin for InventoryPlugin {
                 (
                     equip_on_double_click,
                     unequip_on_double_click,
+                    open_equipment_item_context_menu,
+                    select_equipment_item_info,
                     sync_equipment_views,
                 ),
             );
@@ -361,6 +369,133 @@ fn unequip_on_double_click(
             *last_click = Some((*index, now));
         }
     }
+}
+
+fn open_equipment_item_context_menu(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+    items: Query<(&Interaction, &InventoryItemButton)>,
+    menus: Query<Entity, With<EquipmentItemContextMenu>>,
+) {
+    if !mouse.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Some((_, InventoryItemButton(index))) = items
+        .iter()
+        .find(|(interaction, _)| **interaction == Interaction::Hovered)
+    else {
+        return;
+    };
+    let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
+        return;
+    };
+    for menu in &menus {
+        commands.entity(menu).despawn();
+    }
+    let position = crate::hud_layout::constrain_panel_position(cursor, Vec2::new(112.0, 36.0));
+    commands
+        .spawn((
+            EquipmentItemContextMenu,
+            hud::HudContextMenu,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(position.x),
+                top: px(position.y),
+                width: px(112.0),
+                height: px(36.0),
+                padding: UiRect::horizontal(px(8.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.12, 0.15, 0.20)),
+            BorderColor::all(Color::srgb(0.42, 0.52, 0.64)),
+            ZIndex(100),
+        ))
+        .with_children(|menu| {
+            menu.spawn((
+                EquipmentItemInfoAction(*index),
+                Button,
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("Info"),
+                    TextFont {
+                        font_size: FontSize::Px(14.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+}
+
+fn select_equipment_item_info(
+    mut commands: Commands,
+    catalog: Res<EquipmentCatalog>,
+    actions: Query<(&Interaction, &EquipmentItemInfoAction), Changed<Interaction>>,
+    menus: Query<Entity, With<EquipmentItemContextMenu>>,
+    window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
+) {
+    let Some(index) = actions.iter().find_map(|(interaction, action)| {
+        (*interaction == Interaction::Pressed).then_some(action.0)
+    }) else {
+        return;
+    };
+    for menu in &menus {
+        commands.entity(menu).despawn();
+    }
+    let Some(item) = catalog.0.get(index) else {
+        return;
+    };
+    let position = window
+        .and_then(|window| window.cursor_position())
+        .unwrap_or(Vec2::new(400.0, 200.0))
+        + Vec2::new(16.0, 16.0);
+    let grid = HudGrid::content_sized(1, 6, 16.0, 8.0, UiRect::all(px(10.0)));
+    let (_, content) = hud::spawn_hud_window(
+        &mut commands,
+        &format!("{} info", item.name),
+        None,
+        hud::TemporaryHudWindow,
+        position,
+        grid,
+        hud::HudModuleType::Both,
+        true,
+    );
+    commands.entity(content).with_children(|body| {
+        body.spawn((
+            Text::new(format!("{} - {:?}", item.name, item.kind)),
+            TextFont {
+                font_size: FontSize::Px(16.0),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+        for line in [
+            format!("Total HP {:+}", item.modifiers.max_hp),
+            format!("Total MP {:+}", item.modifiers.mp),
+            format!("Total AP {:+}", item.modifiers.ap),
+            format!("Physical Damage {:+}%", item.modifiers.physical_damage),
+            format!("Magical Damage {:+}%", item.modifiers.magical_damage),
+        ] {
+            body.spawn((
+                Text::new(line),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.78, 0.84, 0.92)),
+            ));
+        }
+    });
 }
 
 fn sync_equipment_views(

@@ -109,6 +109,11 @@ impl HudLayout {
 }
 
 #[derive(Resource, Default)]
+struct HudStack {
+    next_position: u64,
+}
+
+#[derive(Resource, Default)]
 pub(super) struct HudState {
     cursor_bounds: Vec<Rect>,
     suppress_world_click: bool,
@@ -143,7 +148,10 @@ struct HudWindowContent(Entity);
 struct HudGridContent;
 
 #[derive(Component)]
-struct HudContextMenu;
+pub(super) struct HudContextMenu;
+
+#[derive(Component)]
+pub(super) struct TemporaryHudWindow;
 
 #[derive(Component)]
 struct CloseHudWindow(Entity);
@@ -155,6 +163,7 @@ pub(super) struct HudWindow {
     module_type: HudModuleType,
     position: Vec2,
     size: Vec2,
+    stack_position: u64,
     hotkey: Option<KeyCode>,
     visible: bool,
     measured: bool,
@@ -170,12 +179,14 @@ pub(super) struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudState>()
+            .init_resource::<HudStack>()
             .init_resource::<HudLayout>()
             .add_systems(Startup, (load_hud_layout, setup_hud).chain())
             .add_systems(
                 Update,
                 (
                     restore_hud_window_positions,
+                    initialize_hud_stack_positions,
                     interact_with_hud_windows,
                     interact_with_hud_context_menu,
                     toggle_hud_windows,
@@ -218,6 +229,7 @@ pub(super) fn spawn_hud_window<C: Component>(
                 hotkey,
                 position,
                 size: Vec2::splat(SNAP),
+                stack_position: 0,
                 visible: initially_visible,
                 measured: false,
                 dragging: false,
@@ -417,14 +429,52 @@ fn stat_cell(parent: &mut ChildSpawnerCommands, text: &str, color: Color, font_s
     ));
 }
 
+fn initialize_hud_stack_positions(
+    mut stack: ResMut<HudStack>,
+    mut windows: Query<(Entity, &mut HudWindow, &mut ZIndex), Added<HudWindow>>,
+) {
+    let mut entities = windows
+        .iter()
+        .map(|(entity, _, _)| entity)
+        .collect::<Vec<_>>();
+    entities.sort_by_key(|entity| entity.to_bits());
+    for entity in entities {
+        let Ok((_, mut window, mut z_index)) = windows.get_mut(entity) else {
+            continue;
+        };
+        window.stack_position = stack.next_position;
+        z_index.0 = 20 + stack.next_position.min(i32::MAX as u64 - 20) as i32;
+        stack.next_position = stack.next_position.saturating_add(1);
+    }
+}
+
 fn interact_with_hud_windows(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
     buttons: Query<&Interaction, With<Button>>,
-    mut windows: Query<(&mut HudWindow, &mut Node, &Visibility)>,
+    mut stack: ResMut<HudStack>,
+    mut windows: Query<(Entity, &mut HudWindow, &mut Node, &mut ZIndex, &Visibility)>,
 ) {
     let cursor = window.and_then(|window| window.cursor_position());
-    for (mut hud_window, mut node, visibility) in &mut windows {
+    let button_pressed = buttons
+        .iter()
+        .any(|interaction| *interaction == Interaction::Pressed);
+    let topmost_hit = cursor.and_then(|cursor| {
+        windows
+            .iter()
+            .filter(|(_, hud_window, _, _, visibility)| {
+                **visibility == Visibility::Visible
+                    && cursor.x >= hud_window.position.x
+                    && cursor.x <= hud_window.position.x + hud_window.size.x
+                    && cursor.y >= hud_window.position.y
+                    && cursor.y <= hud_window.position.y + hud_window.size.y
+            })
+            .max_by_key(|(entity, hud_window, _, _, _)| {
+                (hud_window.stack_position, entity.to_bits())
+            })
+            .map(|(entity, _, _, _, _)| entity)
+    });
+    for (entity, mut hud_window, mut node, mut z_index, visibility) in &mut windows {
         if mouse.just_released(MouseButton::Left) || cursor.is_none() {
             hud_window.dragging = false;
         }
@@ -433,19 +483,16 @@ fn interact_with_hud_windows(
             continue;
         }
         let Some(cursor) = cursor else { continue };
-        if mouse.just_pressed(MouseButton::Left)
-            && !buttons
-                .iter()
-                .any(|interaction| *interaction == Interaction::Pressed)
-        {
-            let local = cursor - hud_window.position;
-            if local.x >= 0.0
-                && local.x <= hud_window.size.x
-                && local.y >= 0.0
-                && local.y <= hud_window.size.y
-            {
-                hud_window.dragging = true;
-                hud_window.drag_offset = local;
+        if mouse.just_pressed(MouseButton::Left) {
+            hud_window.dragging = false;
+            if Some(entity) == topmost_hit {
+                hud_window.stack_position = stack.next_position;
+                z_index.0 = 20 + stack.next_position.min(i32::MAX as u64 - 20) as i32;
+                stack.next_position = stack.next_position.saturating_add(1);
+                if !button_pressed {
+                    hud_window.dragging = true;
+                    hud_window.drag_offset = cursor - hud_window.position;
+                }
             }
         }
         if hud_window.dragging && mouse.pressed(MouseButton::Left) {
@@ -468,6 +515,8 @@ fn interact_with_hud_context_menu(
     mut windows: Query<(Entity, &mut HudWindow, &Visibility)>,
     menus: Query<Entity, With<HudContextMenu>>,
     close_buttons: Query<(&Interaction, &CloseHudWindow), Changed<Interaction>>,
+    transient_windows: Query<(), With<TemporaryHudWindow>>,
+    buttons: Query<&Interaction, With<Button>>,
 ) {
     state.suppress_world_click =
         menus.iter().next().is_some() && mouse.just_pressed(MouseButton::Left);
@@ -478,11 +527,13 @@ fn interact_with_hud_context_menu(
         })
         .collect::<Vec<_>>();
     for entity in closed {
-        if let Ok((_, mut hud_window, _)) = windows.get_mut(entity) {
+        if transient_windows.get(entity).is_ok() {
+            commands.entity(entity).despawn();
+        } else if let Ok((_, mut hud_window, _)) = windows.get_mut(entity) {
             hud_window.visible = false;
             hud_window.dragging = false;
-            state.suppress_world_click = true;
         }
+        state.suppress_world_click = true;
     }
 
     let cursor = window.and_then(|window| window.cursor_position());
@@ -497,7 +548,11 @@ fn interact_with_hud_context_menu(
                 && cursor.y <= hud_window.position.y + hud_window.size.y;
             (inside && hud_window.visible && *visibility == Visibility::Visible).then_some(entity)
         });
-        if let Some(target) = target {
+        if let Some(target) = target.filter(|_| {
+            !buttons
+                .iter()
+                .any(|interaction| *interaction == Interaction::Hovered)
+        }) {
             for menu in &menus {
                 commands.entity(menu).despawn();
             }
@@ -577,7 +632,10 @@ fn toggle_hud_windows(
 
 fn restore_hud_window_positions(
     layout: Res<HudLayout>,
-    mut windows: Query<(&mut HudWindow, &mut Node, &mut Visibility), Added<HudWindow>>,
+    mut windows: Query<
+        (&mut HudWindow, &mut Node, &mut Visibility),
+        (Added<HudWindow>, Without<TemporaryHudWindow>),
+    >,
 ) {
     for (mut window, mut node, mut visibility) in &mut windows {
         window.visible = layout.visible(window.layout_type, &window.key, window.visible);
@@ -594,7 +652,10 @@ fn restore_hud_window_positions(
     }
 }
 
-fn save_hud_layout(windows: Query<&HudWindow>, mut layout: ResMut<HudLayout>) {
+fn save_hud_layout(
+    windows: Query<&HudWindow, Without<TemporaryHudWindow>>,
+    mut layout: ResMut<HudLayout>,
+) {
     if windows.iter().any(|window| window.dragging) {
         return;
     }
