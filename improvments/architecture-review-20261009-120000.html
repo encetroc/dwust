@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture review for Dwust</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+<style>
+  body { background: #fafaf9; }
+  .seam { border-top: 2px dashed #64748b; }
+  .deep { background: linear-gradient(135deg,#0f172a,#1e293b); }
+  .module-box { min-height: 72px; }
+</style>
+</head>
+<body class="text-slate-900 font-sans">
+<main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+<header class="space-y-4">
+  <p class="text-xs uppercase tracking-[.22em] text-indigo-700">Dwust · 9 October 2026</p>
+  <h1 class="font-serif text-4xl">Architecture review</h1>
+  <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600">
+    <span><b class="text-slate-900">□</b> module</span><span><b class="text-slate-500">┄</b> seam</span><span><b class="text-red-600">→</b> leakage / coordination</span><span><b class="text-slate-900">■</b> deep module</span>
+  </div>
+  <p class="text-sm text-slate-600 max-w-3xl">Scope follows recent combat and HUD changes, with recurring edits in <code>src/main.rs</code> and <code>src/combat.rs</code>. No <code>CONTEXT.md</code> or ADRs are present; domain terms below follow <code>README.md</code>.</p>
+</header>
+<section id="candidates" class="space-y-8">
+<article id="world-movement" class="rounded-2xl border border-stone-200 bg-white p-7 md:p-9 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">Deepen world movement</h2><span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">in-process</span></div>
+  <p class="text-xs uppercase tracking-wider text-slate-500">Files</p><p class="font-mono text-sm">src/main.rs · src/buildings.rs · src/combat.rs</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before · responsibilities intermixed</h3><div class="space-y-2 text-xs">
+      <div class="rounded border border-slate-300 bg-white p-3">World input + cursor / HUD exclusions</div><div class="text-center text-red-600">↓</div><div class="rounded border border-slate-300 bg-white p-3">Destination choice + enemy approach</div><div class="text-center text-red-600">↓</div><div class="rounded border border-slate-300 bg-white p-3">Obstacle conversion + path search + stepping</div><div class="text-center text-red-600">↓</div><div class="rounded border border-slate-300 bg-white p-3">Combat contact timing + camera following</div>
+      <p class="pt-2 text-slate-500">One large file owns both ECS coordination and movement rules; legacy screen-transition tests remain beside current behavior.</p></div></div>
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">After · one deep movement module</h3><div class="min-h-64 flex flex-col justify-center gap-3">
+      <div class="grid grid-cols-2 gap-2 text-xs"><div class="rounded border border-slate-300 bg-white p-3">World input systems</div><div class="rounded border border-slate-300 bg-white p-3">Buildings + combat state</div></div><div class="seam"></div><div class="deep text-white rounded-xl p-5 text-center"><div class="text-[10px] uppercase tracking-widest text-slate-300">World movement module</div><div class="font-semibold mt-2">destination · route · progress</div><div class="text-xs text-slate-300 mt-2">obstacle clearance · arrival intent</div></div><div class="text-center text-slate-400">↓</div><div class="rounded border border-slate-300 bg-white p-3 text-center text-xs">player transform / camera effects</div>
+    </div></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-5 text-sm"><div><h3 class="font-semibold">Problem</h3><p class="text-slate-600 mt-1">World input, pathfinding, movement, and enemy approach are coordinated in <code>main.rs</code>, while old screen-transition test machinery still occupies the same file.</p></div><div><h3 class="font-semibold">Solution</h3><p class="text-slate-600 mt-1">Concentrate movement decisions and route rules in one module; keep ECS scheduling and rendering effects outside its implementation.</p></div></div>
+  <ul class="flex flex-wrap gap-2 text-xs"><li class="rounded bg-indigo-50 px-2 py-1">locality: route bugs stay together</li><li class="rounded bg-indigo-50 px-2 py-1">leverage: one behavior across callers</li><li class="rounded bg-indigo-50 px-2 py-1">tests exercise current movement</li></ul>
+</article>
+
+<article id="combat-rules" class="rounded-2xl border border-stone-200 bg-white p-7 md:p-9 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">Deepen combat rules and turn resolution</h2><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Worth exploring</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">in-process</span></div>
+  <p class="text-xs uppercase tracking-wider text-slate-500">Files</p><p class="font-mono text-sm">src/combat.rs · assets/spells.json · assets/combat_maps/stone_causeway.json</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before · coupled flow</h3><pre class="mermaid">flowchart TB
+      I[combat_input: input + targeting] --> R[range and path rules]
+      I --> E[spell effects + resource costs]
+      E --> T[turn order + enemy turn]
+      I --> V[combat visuals + text]
+      M[map loading and validation] --> R
+      S[session and preparation state] --> I
+      S --> T
+      classDef busy fill:#fff,stroke:#94a3b8,color:#0f172a;
+      classDef leak stroke:#dc2626,stroke-width:2px;
+      class I,E,T,V,R,M,S busy;
+      linkStyle 0,1,2,3 stroke:#dc2626,stroke-width:2px;</pre></div>
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">After · domain rules behind a seam</h3><pre class="mermaid">flowchart TB
+      ECS[Bevy combat systems] -->|small seam| RULES[Deep combat-rules module]
+      RULES --> MOVE[movement and reachability]
+      RULES --> SPELL[spell eligibility and effects]
+      RULES --> TURN[turn resolution]
+      DATA[validated map and spell data] --> RULES
+      RULES --> ECS
+      classDef deep fill:#0f172a,stroke:#0f172a,color:#fff;
+      classDef adapter fill:#fff,stroke:#94a3b8,color:#0f172a;
+      class RULES deep;
+      class ECS,DATA adapter;</pre></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-5 text-sm"><div><h3 class="font-semibold">Problem</h3><p class="text-slate-600 mt-1"><code>combat.rs</code> combines turn state, ECS input/rendering, data validation, path rules, and spell resolution; rules tests cover calculations but not the actual orchestration path.</p></div><div><h3 class="font-semibold">Solution</h3><p class="text-slate-600 mt-1">Gather combat decisions into a deep rules module and leave Bevy systems as the adapter that reads intent and applies results.</p></div></div>
+  <ul class="flex flex-wrap gap-2 text-xs"><li class="rounded bg-indigo-50 px-2 py-1">locality: rules change in one place</li><li class="rounded bg-indigo-50 px-2 py-1">leverage: one seam for tests</li><li class="rounded bg-indigo-50 px-2 py-1">tests cover turn outcomes</li></ul>
+</article>
+
+<article id="hud-lifecycle" class="rounded-2xl border border-stone-200 bg-white p-7 md:p-9 space-y-6 shadow-sm">
+  <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">Concentrate HUD layout lifecycle</h2><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Speculative</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">local-substitutable</span></div>
+  <p class="text-xs uppercase tracking-wider text-slate-500">Files</p><p class="font-mono text-sm">src/hud.rs · hud_layout.json · src/combat.rs</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before · state repeated across systems</h3><div class="space-y-2 text-xs"><div class="flex gap-2"><div class="flex-1 rounded border bg-white p-3">HudLayout file data</div><div class="flex-1 rounded border bg-white p-3">HudWindow live state</div></div><div class="text-center text-red-600">↘ sync / save / restore ↙</div><div class="grid grid-cols-2 gap-2"><div class="rounded border bg-white p-3">interaction + drag</div><div class="rounded border bg-white p-3">combat visibility</div></div><p class="pt-2 text-slate-500">Visibility and position are copied between persisted data, ECS state, and rendered nodes.</p></div></div>
+    <div class="rounded-xl bg-stone-50 border border-stone-200 p-4"><h3 class="text-xs uppercase tracking-wider text-slate-500 mb-3">After · lifecycle held together</h3><div class="min-h-64 flex flex-col justify-center gap-3"><div class="rounded border bg-white p-3 text-center text-xs">HUD input and rendering systems</div><div class="seam"></div><div class="deep text-white rounded-xl p-5 text-center"><div class="text-[10px] uppercase tracking-widest text-slate-300">HUD layout module</div><div class="font-semibold mt-2">position · visibility · persistence</div><div class="text-xs text-slate-300 mt-2">one state transition path</div></div><div class="grid grid-cols-2 gap-2 text-xs"><div class="rounded border bg-white p-3 text-center">file adapter</div><div class="rounded border bg-white p-3 text-center">ECS adapter</div></div></div></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-5 text-sm"><div><h3 class="font-semibold">Problem</h3><p class="text-slate-600 mt-1">The recent HUD generalization expanded state handling across interaction, synchronization, restoration, and saving; those transitions are tested mostly as isolated layout round-trips.</p></div><div><h3 class="font-semibold">Solution</h3><p class="text-slate-600 mt-1">Keep the lifecycle of each HUD window in one module, with file and ECS adapters translating its state to storage and presentation.</p></div></div>
+  <ul class="flex flex-wrap gap-2 text-xs"><li class="rounded bg-indigo-50 px-2 py-1">locality: visibility stays coherent</li><li class="rounded bg-indigo-50 px-2 py-1">leverage: fewer sync rules</li><li class="rounded bg-indigo-50 px-2 py-1">tests cover lifecycle changes</li></ul>
+</article>
+</section>
+<section id="top-recommendation" class="rounded-2xl bg-slate-900 text-white p-8 space-y-3"><p class="text-xs uppercase tracking-widest text-emerald-300">Top recommendation</p><h2 class="font-serif text-2xl"><a class="underline decoration-emerald-400 underline-offset-4" href="#world-movement">Deepen world movement</a></h2><p class="text-slate-300">It is the clearest locality win: movement behavior is concentrated in <code>main.rs</code> alongside obsolete screen-transition tests, while routing already has focused rules worth keeping behind a smaller seam.</p></section>
+</main>
+</body>
+</html>

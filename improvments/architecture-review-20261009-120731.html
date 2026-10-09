@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dwust · Architecture review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({startOnLoad:true,theme:'neutral',securityLevel:'strict'});
+</script>
+<style>
+body{margin:0;background:#fafaf9;color:#0f172a;font-family:system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:48px 24px}article{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:28px;margin:32px 0}h1,h2,h3{font-family:Georgia,serif}h1{font-size:48px}h2{font-size:28px;margin:0 0 16px}p{line-height:1.65}.files{font:13px monospace;color:#475569;line-height:1.8}.badge{display:inline-block;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600}.strong{background:#d1fae5;color:#065f46}.explore{background:#fef3c7;color:#92400e}.tag{background:#f1f5f9;color:#475569}.diagram{min-height:300px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px}.label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#64748b;margin-bottom:16px}.module{border:1px solid #94a3b8;border-radius:6px;padding:12px;text-align:center;background:white}.deep{border:3px solid #0f172a;border-radius:8px;background:linear-gradient(135deg,#0f172a,#1e293b);color:white;padding:20px}.seam{border-top:2px dashed #10b981;padding-top:12px;margin-top:12px}.leak{color:#b91c1c}.arrow{text-align:center;color:#64748b;font-size:22px;padding:4px}.note{font-size:13px;color:#64748b}.evidence{border-left:3px solid #e2e8f0;padding-left:14px}.split{display:grid;grid-template-columns:1fr 1fr;gap:18px}@media(max-width:700px){.split{grid-template-columns:1fr}h1{font-size:36px}}li{margin:6px 0}.wins{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0}.wins li{background:#ecfdf5;border-radius:6px;padding:8px 12px;font-size:13px}.top{background:#0f172a;color:white;border-radius:16px;padding:32px}a{color:#059669}.top a{color:#6ee7b7}
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900">
+<main class="max-w-6xl mx-auto px-6 py-12">
+<header>
+<div class="label">Dwust / 9 October 2026 / HEAD 23ae786</div>
+<h1 class="font-serif">More depth. Less scattered knowledge.</h1>
+<div class="flex flex-wrap gap-4 text-sm text-slate-500"><span>□ module</span><span>┄ seam</span><span class="leak">→ leakage</span><span>■ deep module</span></div>
+<p class="note">Scope: combat movement, terrain, HUD, and free roaming across the latest 12 commits. combat.rs changed in 9; hud.rs in 5. No CONTEXT.md or docs/adr/ found; domain names follow README.md. Direct exploration: no sub-agent tool available. Proposals only; repository unchanged.</p>
+</header>
+<section id="candidates">
+<article id="combat">
+<h2>01 · Deepen the combat rules module</h2>
+<div class="flex gap-2 mb-4"><span class="badge strong">Strong</span><span class="badge tag">in-process</span></div>
+<div class="files">src/combat.rs: combat_input, update_combat_visuals, advance_enemy_turn, finish_if_won, spell_tests<br>assets/spells.json · assets/combat_maps/stone_causeway.json</div>
+<div class="split my-6">
+<div class="diagram"><div class="label">Before · rules repeated across callers</div><pre class="mermaid">
+flowchart TD
+ I[Combat input] --> R[Range / AP / terrain / sight]
+ V[Combat preview] --> D[Range / AP / terrain / sight again]
+ R --> H[Small rule helpers]
+ D --> H
+ T[Tests] --> H
+ I --> M[HP / AP / MP mutations]
+ E[Enemy turn] --> O[Turn order / reset budgets]
+ classDef leak stroke:#b91c1c,stroke-width:2px;
+ class R,D,M,O leak;
+</pre></div>
+<div class="diagram"><div class="label">After · coherent ownership, deeper implementation</div><div class="module">Input adapter · preview adapter</div><div class="arrow">↓</div><div class="deep"><div class="text-center font-semibold">Combat rules module</div><div class="seam text-center text-sm">One interface is the test surface</div><div class="mt-5 text-sm text-slate-300">Deployment · legal movement · cast eligibility<br>AOE · AP / MP changes · turn progress · victory</div></div><div class="note mt-3">Helpers stay private; rendering stays outside.</div></div>
+</div>
+<p><strong>Problem.</strong> The interaction interface requires callers to coordinate deployment, turn identity, legality, stat changes, and victory; small helpers do not hide that knowledge.</p>
+<p><strong>Solution.</strong> Concentrate authoritative combat decisions and mutations in a deep module, with input and preview crossing the same rules seam.</p>
+<p class="evidence note"><strong>Evidence:</strong> combat_input checks range, AP, walkability, and line_clear; update_combat_visuals repeats those checks, while its blue range tint checks only AP and distance. Victory is checked both inside casting and in finish_if_won. Existing spell_tests exercise helpers, not a full cast or turn progression. These are observed differences, not claims that every tint is intended to mean “legal target.”</p>
+<p class="note"><strong>Deletion test:</strong> deleting a duplicate eligibility block in favor of one authoritative decision concentrates knowledge; merely moving each helper to another file would just move complexity. Keep the useful pathfinding and damage implementation.</p>
+<p class="note"><strong>Adapter discipline:</strong> input and preview are existing consumers, not justification for swappable rules adapters; keep the rules concrete until two real implementations exist.</p>
+<ul class="wins"><li>Depth: fewer caller invariants</li><li>Locality: one legality decision</li><li>Leverage: input and preview agree</li><li>Tests cross the rules interface</li></ul>
+<p class="note"><strong>Test leverage:</strong> verify deployment restrictions, rejected casts without AP loss, accepted AOE casts, occupied movement with MP deduction, turn-budget reset, and victory through the same seam used in play.</p>
+</article>
+
+<article id="pointer">
+<h2>02 · Deepen the HUD interaction module</h2>
+<div class="flex gap-2 mb-4"><span class="badge strong">Strong</span><span class="badge tag">local-substitutable</span></div>
+<div class="files">src/hud.rs: HudState, interact_with_hud_windows, interact_with_hud_context_menu, sync_hud<br>src/main.rs: GameViewport, sync_viewport, set_destination, GamePlugin<br>src/combat.rs: combat_input · src/combat_ui_capture.rs</div>
+<div class="split my-6">
+<div class="diagram"><div class="label">Before · two cursor paths, partial suppression</div><div class="module">Window cursor → HUD dragging / menu</div><div class="arrow">↓</div><div class="module">HudState cursor bounds / suppression</div><div class="split mt-4"><div class="module text-sm">World movement<br>checks HudState</div><div class="module text-sm leak">Combat input<br>does not check it</div></div><div class="mt-4 module text-sm">GameViewport → world / combat cursor</div></div>
+<div class="diagram"><div class="label">After · shared input ownership seam</div><div class="split"><div class="module text-sm">Window adapter</div><div class="module text-sm">Windowless adapter</div></div><div class="arrow">↓</div><div class="deep"><div class="font-semibold text-center">HUD interaction module</div><div class="seam text-sm text-center">Shared viewport · pointer ownership</div><div class="mt-4 text-sm text-slate-300">Drag · close · menu dismissal<br>Visible bounds · click consumption</div></div><div class="arrow">↓</div><div class="module text-sm">World / combat use unconsumed input</div></div>
+</div>
+<p><strong>Problem.</strong> HUD interaction reads a Window directly while world and combat read GameViewport; click-consumption knowledge leaks into world movement but not combat.</p>
+<p><strong>Solution.</strong> Deepen HUD interaction around the existing viewport seam, and make same-frame pointer ownership coherent before either world or combat handles a click.</p>
+<p class="evidence note"><strong>Evidence:</strong> set_destination consults HudState; combat_input never does. HUD dragging and context menus read PrimaryWindow, so they receive no cursor in the windowless capture. HudPlugin chains its own systems, but their ordering relative to world and combat input is not explicit. The close-click test manually sets suppress_world_click instead of running the close interaction.</p>
+<p class="note"><strong>Deletion test:</strong> remove duplicated Window cursor reads and caller-specific suppression handling, concentrating the decision in HUD interaction; deleting HudState without replacing ownership would merely scatter the same checks.</p>
+<p class="note"><strong>Adapter discipline:</strong> window input and scripted windowless input already exist: two adapters justify this seam. No new general input framework is needed.</p>
+<ul class="wins"><li>Depth: pointer ownership hidden</li><li>Locality: consumption precedes gameplay</li><li>Leverage: both game modes benefit</li><li>Tests use both input adapters</li></ul>
+<p class="note"><strong>Test leverage:</strong> drive drag, close, and menu dismissal through actual schedules; assert the same click neither moves the world player nor moves or casts in combat, including with no Window.</p>
+</article>
+
+<article id="roaming">
+<h2>03 · Deepen the free-roam journey module</h2>
+<div class="flex gap-2 mb-4"><span class="badge explore">Worth exploring</span><span class="badge tag">in-process</span></div>
+<div class="files">src/main.rs: Player, set_destination, move_player, follow_player, GamePlugin, tests<br>src/combat.rs: start_combat · src/headless.rs · README.md: Checks</div>
+<div class="split my-6">
+<div class="diagram"><div class="label">Before · verification follows retired behavior</div><pre class="mermaid">
+flowchart TD
+ G[Live GamePlugin] --> M[Destination / movement / camera]
+ M --> C[Combat contact check]
+ T[App tests] --> S[Test-only screen travel schedule]
+ H[Legacy headless journey] --> S
+ P[Path tests] --> F[Geometry helpers]
+ classDef leak stroke:#b91c1c,stroke-width:2px;
+ class S leak;
+</pre></div>
+<div class="diagram"><div class="label">After · tests follow the live journey</div><div class="module">Game composition · deterministic journey tests</div><div class="arrow">↓ same live interface</div><div class="deep"><div class="font-semibold text-center">Free-roam journey module</div><div class="seam text-sm text-center">Live schedule owns journey progression</div><div class="mt-5 text-sm text-slate-300">Destination · building detour · arrival<br>Camera follow · enemy contact handoff</div></div><div class="note mt-4">Retire test-only screen travel; retain useful geometry tests.</div></div>
+</div>
+<p><strong>Problem.</strong> Free-roam journey knowledge spans main and combat, while several schedule tests and the headless journey verify a screen-travel implementation absent from live play.</p>
+<p><strong>Solution.</strong> Concentrate live journey progression and its contact handoff in a coherent module, then replace retired schedule tests with tests that cross its actual interface.</p>
+<p class="evidence note"><strong>Evidence:</strong> GamePlugin installs set_destination → move_player → follow_player; CombatPlugin orders start_combat after move_player. WorldScreen, screen transitions, overlay travel, and their schedule registration are test-only. README explicitly says the legacy headless journey cannot verify free roaming.</p>
+<p class="note"><strong>Deletion test:</strong> deleting test-only screen travel removes obsolete complexity; it does not deepen live movement by itself. Depth comes from keeping route progression, arrival, and contact knowledge local rather than merely splitting main.rs by function size.</p>
+<p class="note"><strong>Adapter discipline:</strong> reuse the viewport adapters from candidate 02; no hypothetical interchangeable pathfinder seam. World geometry and combat grid movement are different domain rules, not candidates for forced unification.</p>
+<ul class="wins"><li>Depth: journey invariants stay internal</li><li>Locality: live schedule owns progression</li><li>Leverage: tests exercise real journeys</li><li>Delete retired verification implementation</li></ul>
+<p class="note"><strong>Test leverage:</strong> fixed-time journey tests cover building detours, destination replacement, keyboard movement, camera follow, and enemy approach where combat starts only on contact—not on the click. Keep image capture separate from deterministic assertions.</p>
+</article>
+</section>
+<section id="top-recommendation" class="top">
+<div class="label text-emerald-300">Top recommendation</div>
+<h2>Start with combat rules.</h2>
+<p>Combat is the most active module; concentrating repeated legality and state changes offers the strongest locality and leverage, with meaningful tests beyond the existing helpers.</p>
+<a href="#combat">Explore candidate 01 ↑</a>
+<p class="note text-slate-300">If click-through is the immediate pain point, candidate 02 is the smaller first move. No interface designs or implementation changes are proposed yet.</p>
+</section>
+</main>
+</body>
+</html>
