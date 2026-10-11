@@ -370,12 +370,23 @@ fn open_equipment_item_context_menu(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
     items: Query<(&Hovered, &InventoryItemButton)>,
+    equipped_icons: Query<(&Hovered, &EquippedItemIcon)>,
     menus: Query<Entity, With<EquipmentItemContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-    let Some((_, InventoryItemButton(index))) = items.iter().next() else {
+    let index = items
+        .iter()
+        .next()
+        .map(|(_, InventoryItemButton(index))| *index)
+        .or_else(|| {
+            equipped_icons
+                .iter()
+                .next()
+                .map(|(_, EquippedItemIcon(index))| *index)
+        });
+    let Some(index) = index else {
         return;
     };
     let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
@@ -405,7 +416,7 @@ fn open_equipment_item_context_menu(
         ))
         .with_children(|menu| {
             menu.spawn((
-                EquipmentItemInfoAction(*index),
+                EquipmentItemInfoAction(index),
                 UiButton,
                 Node {
                     width: percent(100),
@@ -469,12 +480,27 @@ fn select_equipment_item_info(
             },
             TextColor(Color::WHITE),
         ));
-        for line in [
-            format!("Total HP {:+}", item.modifiers.max_hp),
-            format!("Total MP {:+}", item.modifiers.mp),
-            format!("Total AP {:+}", item.modifiers.ap),
-            format!("Physical Damage {:+}%", item.modifiers.physical_damage),
-            format!("Magical Damage {:+}%", item.modifiers.magical_damage),
+        for (line, category) in [
+            (
+                format!("Total HP {:+}", item.modifiers.max_hp),
+                hud::StatCategory::Hp,
+            ),
+            (
+                format!("Total MP {:+}", item.modifiers.mp),
+                hud::StatCategory::Mp,
+            ),
+            (
+                format!("Total AP {:+}", item.modifiers.ap),
+                hud::StatCategory::Ap,
+            ),
+            (
+                format!("Physical Damage {:+}%", item.modifiers.physical_damage),
+                hud::StatCategory::Physical,
+            ),
+            (
+                format!("Magical Damage {:+}%", item.modifiers.magical_damage),
+                hud::StatCategory::Magical,
+            ),
         ] {
             body.spawn((
                 Text::new(line),
@@ -482,7 +508,7 @@ fn select_equipment_item_info(
                     font_size: FontSize::Px(14.0),
                     ..default()
                 },
-                TextColor(Color::srgb(0.78, 0.84, 0.92)),
+                TextColor(hud::stat_color(category)),
             ));
         }
     });

@@ -1,5 +1,5 @@
 use super::*;
-use bevy::{ui::Pressed, ui_widgets::Button as UiButton};
+use bevy::{picking::hover::Hovered, ui::Pressed, ui_widgets::Button as UiButton};
 use serde::{Deserialize, Serialize};
 
 const GRID_W: i32 = 10;
@@ -81,6 +81,8 @@ struct SpellEffect {
 #[derive(Clone, Debug, Deserialize)]
 struct Spell {
     name: String,
+    #[serde(default)]
+    description: String,
     ap_cost: i32,
     range: i32,
     /// Base damage before the caster's matching percentage bonus is applied.
@@ -253,6 +255,12 @@ struct CombatSpells;
 struct AbilityIcon(usize);
 
 #[derive(Component)]
+struct AbilityInfoContextMenu;
+
+#[derive(Component)]
+struct AbilityInfoAction(usize);
+
+#[derive(Component)]
 struct CombatTimeline;
 
 #[derive(Component)]
@@ -276,6 +284,7 @@ impl Plugin for CombatPlugin {
             .init_resource::<TurnOrder>()
             .insert_resource(EnemyTurnDelay(Timer::from_seconds(0.65, TimerMode::Once)))
             .add_systems(Startup, spawn_world_enemies)
+            .add_systems(Update, (open_ability_context_menu, select_ability_info))
             .add_systems(OnEnter(GameMode::Combat), enter_combat)
             .add_systems(OnExit(GameMode::Combat), exit_combat)
             .add_systems(
@@ -758,6 +767,208 @@ fn world_to_cell(point: Vec3) -> IVec2 {
         (point.x / TILE + (GRID_W - 1) as f32 / 2.0).round() as i32,
         (point.z / TILE + (GRID_H - 1) as f32 / 2.0).round() as i32,
     )
+}
+
+fn open_ability_context_menu(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    abilities: Query<(&Hovered, &AbilityIcon)>,
+    menus: Query<Entity, With<AbilityInfoContextMenu>>,
+) {
+    if !mouse.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Some((_, AbilityIcon(index))) = abilities.iter().next() else {
+        return;
+    };
+    let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
+        return;
+    };
+    for menu in &menus {
+        commands.entity(menu).despawn();
+    }
+    let position = crate::hud_layout::constrain_panel_position(cursor, Vec2::new(112.0, 36.0));
+    commands
+        .spawn((
+            AbilityInfoContextMenu,
+            super::hud::HudContextMenu,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(position.x),
+                top: px(position.y),
+                width: px(112.0),
+                height: px(36.0),
+                padding: UiRect::horizontal(px(8.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.12, 0.15, 0.20)),
+            BorderColor::all(Color::srgb(0.42, 0.52, 0.64)),
+            ZIndex(100),
+        ))
+        .with_children(|menu| {
+            menu.spawn((
+                AbilityInfoAction(*index),
+                UiButton,
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("Info"),
+                    TextFont {
+                        font_size: FontSize::Px(14.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+}
+
+fn select_ability_info(
+    mut commands: Commands,
+    book: Res<SpellBook>,
+    actions: Query<(&Pressed, &AbilityInfoAction), Changed<Pressed>>,
+    menus: Query<Entity, With<AbilityInfoContextMenu>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+) {
+    let Some((_, AbilityInfoAction(index))) = actions.iter().next() else {
+        return;
+    };
+    for menu in &menus {
+        commands.entity(menu).despawn();
+    }
+    let Some(spell) = book.0.get(*index) else {
+        return;
+    };
+    let position = window
+        .and_then(|window| window.cursor_position())
+        .unwrap_or(Vec2::new(400.0, 200.0))
+        + Vec2::new(16.0, 16.0);
+    let info_rows = 5
+        + usize::from(!spell.description.is_empty())
+        + usize::from(spell.base_damage > 0)
+        + spell.effects.len();
+    let grid =
+        super::hud_layout::HudGrid::content_sized(1, info_rows, 16.0, 8.0, UiRect::all(px(10.0)));
+    let (_, content) = super::hud::spawn_hud_window(
+        &mut commands,
+        &format!("{} info", spell.name),
+        None,
+        super::hud::TemporaryHudWindow,
+        position,
+        grid,
+        super::hud::HudModuleType::Both,
+        true,
+    );
+    commands.entity(content).with_children(|body| {
+        ability_info_line(body, &spell.name, Color::WHITE);
+        if !spell.description.is_empty() {
+            ability_info_line(
+                body,
+                &spell.description,
+                super::hud::stat_color(super::hud::StatCategory::Neutral),
+            );
+        }
+        ability_info_line(
+            body,
+            &format!("AP Cost: {}", spell.ap_cost),
+            super::hud::stat_color(super::hud::StatCategory::Ap),
+        );
+        ability_info_line(
+            body,
+            &format!("Range: {}", spell.range),
+            super::hud::stat_color(super::hud::StatCategory::Neutral),
+        );
+        ability_info_line(
+            body,
+            &format!("Target: {:?}", spell.target),
+            super::hud::stat_color(super::hud::StatCategory::Neutral),
+        );
+        ability_info_line(
+            body,
+            &format!(
+                "Area: {}x{}",
+                spell.area.first().map_or(0, Vec::len),
+                spell.area.len()
+            ),
+            super::hud::stat_color(super::hud::StatCategory::Neutral),
+        );
+        if spell.base_damage > 0 {
+            let category = match spell.damage_type {
+                DamageType::Physical => super::hud::StatCategory::Physical,
+                DamageType::Magical => super::hud::StatCategory::Magical,
+            };
+            ability_info_line(
+                body,
+                &format!(
+                    "{} Damage: {}",
+                    match spell.damage_type {
+                        DamageType::Physical => "Physical",
+                        DamageType::Magical => "Magical",
+                    },
+                    spell.base_damage
+                ),
+                super::hud::stat_color(category),
+            );
+        }
+        for effect in &spell.effects {
+            let suffix = match effect.stat {
+                SpellStat::PhysicalDamage | SpellStat::MagicalDamage => "%",
+                _ => "",
+            };
+            ability_info_line(
+                body,
+                &format!(
+                    "{}: {:+}{suffix}",
+                    spell_stat_label(effect.stat),
+                    effect.amount
+                ),
+                spell_stat_color(effect.stat),
+            );
+        }
+    });
+}
+
+fn ability_info_line(parent: &mut ChildSpawnerCommands, text: &str, color: Color) {
+    parent.spawn((
+        Text::new(text.to_owned()),
+        TextFont {
+            font_size: FontSize::Px(14.0),
+            ..default()
+        },
+        TextColor(color),
+        TextLayout::new(Justify::Left, LineBreak::WordBoundary),
+    ));
+}
+
+fn spell_stat_label(stat: SpellStat) -> &'static str {
+    match stat {
+        SpellStat::Hp => "HP",
+        SpellStat::MaxHp => "Max HP",
+        SpellStat::Mp => "MP",
+        SpellStat::Ap => "AP",
+        SpellStat::PhysicalDamage => "Physical Damage",
+        SpellStat::MagicalDamage => "Magical Damage",
+    }
+}
+
+fn spell_stat_color(stat: SpellStat) -> Color {
+    let category = match stat {
+        SpellStat::Hp | SpellStat::MaxHp => super::hud::StatCategory::Hp,
+        SpellStat::Mp => super::hud::StatCategory::Mp,
+        SpellStat::Ap => super::hud::StatCategory::Ap,
+        SpellStat::PhysicalDamage => super::hud::StatCategory::Physical,
+        SpellStat::MagicalDamage => super::hud::StatCategory::Magical,
+    };
+    super::hud::stat_color(category)
 }
 
 fn combat_input(
@@ -1312,18 +1523,32 @@ fn update_equipment_stats(
     }
 }
 
-fn update_combat_stats(mut stats: Query<(&mut Text, &CombatStatCell)>, units: Query<&Unit>) {
+fn update_combat_stats(
+    mut stats: Query<(&mut Text, &mut TextColor, &CombatStatCell)>,
+    units: Query<&Unit>,
+) {
     let player = units.iter().find(|unit| unit.team == Team::Player);
-    for (mut text, CombatStatCell(stat)) in &mut stats {
-        text.0 = match stat {
-            CombatStat::Hp => format!(
-                "HP {}/{}",
-                player.map_or(0, |unit| unit.hp.max(0)),
-                player.map_or(0, |unit| unit.max_hp)
+    for (mut text, mut color, CombatStatCell(stat)) in &mut stats {
+        let (value, category) = match stat {
+            CombatStat::Hp => (
+                format!(
+                    "HP {}/{}",
+                    player.map_or(0, |unit| unit.hp.max(0)),
+                    player.map_or(0, |unit| unit.max_hp)
+                ),
+                super::hud::StatCategory::Hp,
             ),
-            CombatStat::Mp => format!("MP {}", player.map_or(0, |unit| unit.mp)),
-            CombatStat::Ap => format!("AP {}", player.map_or(0, |unit| unit.ap)),
+            CombatStat::Mp => (
+                format!("MP {}", player.map_or(0, |unit| unit.mp)),
+                super::hud::StatCategory::Mp,
+            ),
+            CombatStat::Ap => (
+                format!("AP {}", player.map_or(0, |unit| unit.ap)),
+                super::hud::StatCategory::Ap,
+            ),
         };
+        text.0 = value;
+        color.0 = super::hud::stat_color(category);
     }
 }
 
@@ -1474,6 +1699,7 @@ mod spell_tests {
         let spells: Vec<Spell> = serde_json::from_str(include_str!("../assets/spells.json"))
             .expect("the example spell configuration should deserialize");
         assert!(!spells.is_empty());
+        assert!(spells.iter().all(|spell| !spell.description.is_empty()));
         assert!(spells.iter().all(|spell| {
             spell.ap_cost >= 0
                 && spell.range >= 0

@@ -14,6 +14,27 @@ use std::collections::HashMap;
 const HUD_LAYOUT_PATH: &str = "hud_layout.json";
 const STATS_KEY: &str = "Stats";
 
+#[derive(Clone, Copy)]
+pub(super) enum StatCategory {
+    Hp,
+    Mp,
+    Ap,
+    Physical,
+    Magical,
+    Neutral,
+}
+
+pub(super) fn stat_color(category: StatCategory) -> Color {
+    match category {
+        StatCategory::Hp => Color::srgb(0.92, 0.24, 0.28),
+        StatCategory::Mp => Color::srgb(0.30, 0.82, 0.42),
+        StatCategory::Ap => Color::srgb(0.30, 0.58, 0.96),
+        StatCategory::Physical => Color::srgb(0.95, 0.58, 0.20),
+        StatCategory::Magical => Color::srgb(0.70, 0.40, 0.92),
+        StatCategory::Neutral => Color::srgb(0.78, 0.84, 0.92),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum HudLayoutType {
@@ -322,25 +343,40 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         true,
     );
     commands.entity(content).with_children(|body| {
-        stat_cell(body, "Total HP", Color::srgb(0.36, 0.84, 0.48), 14.0);
+        stat_cell(body, "Total HP", stat_color(StatCategory::Hp), 14.0);
         equipment_stat_cell(body, "100", EquipmentStatValue::Hp);
-        stat_cell(body, "Total MP", Color::srgb(0.36, 0.72, 0.96), 14.0);
+        stat_cell(body, "Total MP", stat_color(StatCategory::Mp), 14.0);
         equipment_stat_cell(body, "3", EquipmentStatValue::Mp);
-        stat_cell(body, "Total AP", Color::srgb(0.82, 0.58, 0.96), 14.0);
+        stat_cell(body, "Total AP", stat_color(StatCategory::Ap), 14.0);
         equipment_stat_cell(body, "6", EquipmentStatValue::Ap);
-        stat_cell(body, "Physical Damage", Color::srgb(0.95, 0.68, 0.30), 14.0);
+        stat_cell(
+            body,
+            "Physical Damage",
+            stat_color(StatCategory::Physical),
+            14.0,
+        );
         equipment_stat_cell(body, "12%", EquipmentStatValue::PhysicalDamage);
-        stat_cell(body, "Magical Damage", Color::srgb(0.43, 0.68, 0.98), 14.0);
+        stat_cell(
+            body,
+            "Magical Damage",
+            stat_color(StatCategory::Magical),
+            14.0,
+        );
         equipment_stat_cell(body, "8%", EquipmentStatValue::MagicalDamage);
         stat_cell(
             body,
             "Physical Defense",
-            Color::srgb(0.72, 0.76, 0.82),
+            stat_color(StatCategory::Physical),
             14.0,
         );
-        stat_cell(body, "0", Color::WHITE, 16.0);
-        stat_cell(body, "Magical Defense", Color::srgb(0.72, 0.76, 0.82), 14.0);
-        stat_cell(body, "0", Color::WHITE, 16.0);
+        stat_cell(body, "0", stat_color(StatCategory::Physical), 16.0);
+        stat_cell(
+            body,
+            "Magical Defense",
+            stat_color(StatCategory::Magical),
+            14.0,
+        );
+        stat_cell(body, "0", stat_color(StatCategory::Magical), 16.0);
     });
     commands
         .spawn((
@@ -393,7 +429,13 @@ fn equipment_stat_cell(parent: &mut ChildSpawnerCommands, text: &str, stat: Equi
             font_size: FontSize::Px(16.0),
             ..default()
         },
-        TextColor(Color::WHITE),
+        TextColor(stat_color(match stat {
+            EquipmentStatValue::Hp => StatCategory::Hp,
+            EquipmentStatValue::Mp => StatCategory::Mp,
+            EquipmentStatValue::Ap => StatCategory::Ap,
+            EquipmentStatValue::PhysicalDamage => StatCategory::Physical,
+            EquipmentStatValue::MagicalDamage => StatCategory::Magical,
+        })),
     ));
 }
 
@@ -724,6 +766,21 @@ fn sync_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stat_categories_use_the_requested_semantic_colors() {
+        assert_eq!(stat_color(StatCategory::Hp), Color::srgb(0.92, 0.24, 0.28));
+        assert_eq!(stat_color(StatCategory::Mp), Color::srgb(0.30, 0.82, 0.42));
+        assert_eq!(stat_color(StatCategory::Ap), Color::srgb(0.30, 0.58, 0.96));
+        assert_eq!(
+            stat_color(StatCategory::Physical),
+            Color::srgb(0.95, 0.58, 0.20)
+        );
+        assert_eq!(
+            stat_color(StatCategory::Magical),
+            Color::srgb(0.70, 0.40, 0.92)
+        );
+    }
 
     #[test]
     fn hud_layout_round_trips_named_positions() {
