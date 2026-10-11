@@ -1,5 +1,5 @@
 use crate::{hud, hud_layout::HudGrid};
-use bevy::prelude::*;
+use bevy::{picking::hover::Hovered, prelude::*, ui::Pressed, ui_widgets::Button as UiButton};
 use serde::Deserialize;
 
 const INVENTORY_KEY: &str = "Inventory";
@@ -185,7 +185,7 @@ fn spawn_inventory_panels(
                     .spawn((
                         InventoryItemButton(index),
                         Name::new(item.name.clone()),
-                        Button,
+                        UiButton,
                         Node {
                             width: px(ABILITY_CELL_SIZE),
                             height: px(ABILITY_CELL_SIZE),
@@ -274,7 +274,7 @@ fn spawn_inventory_panels(
                         {
                             slot.spawn((
                                 EquippedItemIcon(index),
-                                Button,
+                                UiButton,
                                 Node {
                                     position_type: PositionType::Absolute,
                                     left: px(0),
@@ -324,13 +324,10 @@ fn equip_on_double_click(
     time: Res<Time>,
     catalog: Res<EquipmentCatalog>,
     mut equipped: ResMut<Equipped>,
-    items: Query<(&Interaction, &InventoryItemButton), Changed<Interaction>>,
+    items: Query<(&Pressed, &InventoryItemButton), Changed<Pressed>>,
     mut last_click: Local<Option<(usize, f32)>>,
 ) {
-    for (interaction, InventoryItemButton(index)) in &items {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+    for (_, InventoryItemButton(index)) in &items {
         let now = time.elapsed_secs();
         if last_click
             .is_some_and(|(previous, at)| previous == *index && now - at <= DOUBLE_CLICK_SECS)
@@ -348,13 +345,10 @@ fn equip_on_double_click(
 fn unequip_on_double_click(
     time: Res<Time>,
     mut equipped: ResMut<Equipped>,
-    icons: Query<(&Interaction, &EquippedItemIcon), Changed<Interaction>>,
+    icons: Query<(&Pressed, &EquippedItemIcon), Changed<Pressed>>,
     mut last_click: Local<Option<(usize, f32)>>,
 ) {
-    for (interaction, EquippedItemIcon(index)) in &icons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+    for (_, EquippedItemIcon(index)) in &icons {
         let now = time.elapsed_secs();
         if last_click
             .is_some_and(|(previous, at)| previous == *index && now - at <= DOUBLE_CLICK_SECS)
@@ -375,16 +369,13 @@ fn open_equipment_item_context_menu(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    items: Query<(&Interaction, &InventoryItemButton)>,
+    items: Query<(&Hovered, &InventoryItemButton)>,
     menus: Query<Entity, With<EquipmentItemContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-    let Some((_, InventoryItemButton(index))) = items
-        .iter()
-        .find(|(interaction, _)| **interaction == Interaction::Hovered)
-    else {
+    let Some((_, InventoryItemButton(index))) = items.iter().next() else {
         return;
     };
     let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
@@ -415,7 +406,7 @@ fn open_equipment_item_context_menu(
         .with_children(|menu| {
             menu.spawn((
                 EquipmentItemInfoAction(*index),
-                Button,
+                UiButton,
                 Node {
                     width: percent(100),
                     height: percent(100),
@@ -440,15 +431,14 @@ fn open_equipment_item_context_menu(
 fn select_equipment_item_info(
     mut commands: Commands,
     catalog: Res<EquipmentCatalog>,
-    actions: Query<(&Interaction, &EquipmentItemInfoAction), Changed<Interaction>>,
+    actions: Query<(&Pressed, &EquipmentItemInfoAction), Changed<Pressed>>,
     menus: Query<Entity, With<EquipmentItemContextMenu>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
 ) {
-    let Some(index) = actions.iter().find_map(|(interaction, action)| {
-        (*interaction == Interaction::Pressed).then_some(action.0)
-    }) else {
+    let Some((_, action)) = actions.iter().next() else {
         return;
     };
+    let index = action.0;
     for menu in &menus {
         commands.entity(menu).despawn();
     }

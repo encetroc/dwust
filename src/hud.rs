@@ -2,7 +2,12 @@ use crate::{
     config::{WINDOW_HEIGHT, WINDOW_WIDTH},
     hud_layout::{self, HudGrid, SNAP},
 };
-use bevy::{prelude::*, ui::UiSystems};
+use bevy::{
+    picking::hover::Hovered,
+    prelude::*,
+    ui::{Pressed, UiSystems},
+    ui_widgets::Button as UiButton,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -451,14 +456,12 @@ fn initialize_hud_stack_positions(
 fn interact_with_hud_windows(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    buttons: Query<&Interaction, With<Button>>,
+    buttons: Query<&Pressed, With<UiButton>>,
     mut stack: ResMut<HudStack>,
     mut windows: Query<(Entity, &mut HudWindow, &mut Node, &mut ZIndex, &Visibility)>,
 ) {
     let cursor = window.and_then(|window| window.cursor_position());
-    let button_pressed = buttons
-        .iter()
-        .any(|interaction| *interaction == Interaction::Pressed);
+    let button_pressed = !buttons.is_empty();
     let topmost_hit = cursor.and_then(|cursor| {
         windows
             .iter()
@@ -514,17 +517,15 @@ fn interact_with_hud_context_menu(
     mut state: ResMut<HudState>,
     mut windows: Query<(Entity, &mut HudWindow, &Visibility)>,
     menus: Query<Entity, With<HudContextMenu>>,
-    close_buttons: Query<(&Interaction, &CloseHudWindow), Changed<Interaction>>,
+    close_buttons: Query<(&Pressed, &CloseHudWindow), Changed<Pressed>>,
     transient_windows: Query<(), With<TemporaryHudWindow>>,
-    buttons: Query<&Interaction, With<Button>>,
+    buttons: Query<&Hovered, With<UiButton>>,
 ) {
     state.suppress_world_click =
         menus.iter().next().is_some() && mouse.just_pressed(MouseButton::Left);
     let closed = close_buttons
         .iter()
-        .filter_map(|(interaction, close)| {
-            (*interaction == Interaction::Pressed).then_some(close.0)
-        })
+        .map(|(_, close)| close.0)
         .collect::<Vec<_>>();
     for entity in closed {
         if transient_windows.get(entity).is_ok() {
@@ -548,11 +549,7 @@ fn interact_with_hud_context_menu(
                 && cursor.y <= hud_window.position.y + hud_window.size.y;
             (inside && hud_window.visible && *visibility == Visibility::Visible).then_some(entity)
         });
-        if let Some(target) = target.filter(|_| {
-            !buttons
-                .iter()
-                .any(|interaction| *interaction == Interaction::Hovered)
-        }) {
+        if let Some(target) = target.filter(|_| buttons.is_empty()) {
             for menu in &menus {
                 commands.entity(menu).despawn();
             }
@@ -576,7 +573,7 @@ fn interact_with_hud_context_menu(
                 .with_children(|menu| {
                     menu.spawn((
                         CloseHudWindow(target),
-                        Button,
+                        UiButton,
                         Node {
                             width: percent(100),
                             height: percent(100),

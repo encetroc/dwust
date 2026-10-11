@@ -1,4 +1,5 @@
 use super::*;
+use bevy::{ui::Pressed, ui_widgets::Button as UiButton};
 use serde::{Deserialize, Serialize};
 
 const GRID_W: i32 = 10;
@@ -357,7 +358,7 @@ fn spawn_shared_combat_modules(mut commands: Commands, book: Res<SpellBook>) {
             let color = ability_color(spell);
             grid.spawn((
                 AbilityIcon(index),
-                Button,
+                UiButton,
                 Node {
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -764,7 +765,7 @@ fn combat_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     viewport: Res<GameViewport>,
     hud: Res<super::hud::HudState>,
-    ability_interactions: Query<(&AbilityIcon, &Interaction), Changed<Interaction>>,
+    ability_interactions: Query<(&AbilityIcon, &Pressed), Changed<Pressed>>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     book: Res<SpellBook>,
     mut session: ResMut<Session>,
@@ -821,10 +822,7 @@ fn combat_input(
     if !is_player_turn {
         return;
     }
-    if let Some((AbilityIcon(index), _)) = ability_interactions
-        .iter()
-        .find(|(_, interaction)| **interaction == Interaction::Pressed)
-    {
+    if let Some((AbilityIcon(index), _)) = ability_interactions.iter().next() {
         session.spell_selected = Some(*index);
         return;
     }

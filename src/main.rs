@@ -424,7 +424,7 @@ fn setup_overlay(mut commands: Commands) {
 
 #[cfg(test)]
 fn overlay_over(
-    event: On<Pointer<Over>>,
+    event: On<PointerOver>,
     mut pointer: ResMut<OverlayPointer>,
     mut colors: Query<&mut BackgroundColor>,
 ) {
@@ -436,7 +436,7 @@ fn overlay_over(
 
 #[cfg(test)]
 fn overlay_out(
-    event: On<Pointer<Out>>,
+    event: On<PointerOut>,
     mut pointer: ResMut<OverlayPointer>,
     mut colors: Query<&mut BackgroundColor>,
 ) {
@@ -450,7 +450,7 @@ fn overlay_out(
 
 #[cfg(test)]
 fn overlay_press(
-    mut event: On<Pointer<Press>>,
+    mut event: On<PointerPress>,
     actions: Query<&OverlayAction>,
     mut inputs: MessageWriter<OverlayInput>,
     mut pointer: ResMut<OverlayPointer>,
