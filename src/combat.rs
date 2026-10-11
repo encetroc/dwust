@@ -334,17 +334,12 @@ fn load_spells(mut book: ResMut<SpellBook>) {
 }
 
 fn spawn_shared_combat_modules(mut commands: Commands, book: Res<SpellBook>) {
-    let abilities_grid = super::hud_layout::HudGrid::fixed_cells(
-        10,
-        2,
-        36.0,
-        8.0,
-        UiRect::new(px(8), px(28), px(8), px(8)),
-    );
+    let abilities_grid =
+        super::hud_layout::HudGrid::fixed_cells(10, 2, 36.0, 8.0, UiRect::all(px(8.0)));
     let (_, abilities_content) = super::hud::spawn_hud_window(
         &mut commands,
         "Abilities",
-        Some(KeyCode::KeyP),
+        Some(KeyCode::KeyA),
         CombatSpells,
         Vec2::new(352.0, 192.0),
         abilities_grid,
@@ -388,7 +383,24 @@ fn spawn_shared_combat_modules(mut commands: Commands, book: Res<SpellBook>) {
                 ));
             });
         }
+        for _ in book.0.len().min(20)..20 {
+            spawn_empty_ability_slot(grid);
+        }
     });
+}
+
+fn spawn_empty_ability_slot(parent: &mut ChildSpawnerCommands) {
+    parent.spawn((
+        Node {
+            width: px(36.0),
+            height: px(36.0),
+            border: UiRect::all(px(1.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72)),
+        BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
+        Pickable::IGNORE,
+    ));
 }
 
 fn spawn_world_enemies(

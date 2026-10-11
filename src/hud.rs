@@ -497,12 +497,26 @@ fn initialize_hud_stack_positions(
 fn interact_with_hud_windows(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    buttons: Query<&Pressed, With<UiButton>>,
+    buttons: Query<
+        (
+            &Pressed,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &InheritedVisibility,
+        ),
+        With<UiButton>,
+    >,
     mut stack: ResMut<HudStack>,
     mut windows: Query<(Entity, &mut HudWindow, &mut Node, &mut ZIndex, &Visibility)>,
 ) {
-    let cursor = window.and_then(|window| window.cursor_position());
-    let button_pressed = !buttons.is_empty();
+    let (cursor, scale_factor) = window.map_or((None, 1.0), |window| {
+        (window.cursor_position(), window.scale_factor())
+    });
+    let button_under_cursor = cursor.is_some_and(|cursor| {
+        buttons.iter().any(|(_, node, transform, visibility)| {
+            visibility.get() && ui_node_contains_cursor(cursor, scale_factor, node, *transform)
+        })
+    });
     let topmost_hit = cursor.and_then(|cursor| {
         windows
             .iter()
@@ -533,7 +547,7 @@ fn interact_with_hud_windows(
                 hud_window.stack_position = stack.next_position;
                 z_index.0 = 20 + stack.next_position.min(i32::MAX as u64 - 20) as i32;
                 stack.next_position = stack.next_position.saturating_add(1);
-                if !button_pressed {
+                if !button_under_cursor {
                     hud_window.dragging = true;
                     hud_window.drag_offset = cursor - hud_window.position;
                 }

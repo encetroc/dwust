@@ -1,6 +1,6 @@
 use crate::{hud, hud_layout::HudGrid};
 use bevy::{prelude::*, ui::Pressed, ui_widgets::Button as UiButton};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const INVENTORY_KEY: &str = "Inventory";
 const EQUIPMENT_KEY: &str = "Equipment";
@@ -8,6 +8,7 @@ const ABILITY_CELL_SIZE: f32 = 36.0;
 const EQUIPMENT_CELL_SIZE: f32 = ABILITY_CELL_SIZE * 2.0;
 const DOUBLE_CLICK_SECS: f32 = 0.35;
 const EQUIPMENT_PATH: &str = "assets/equipment.json";
+const EQUIPPED_ITEMS_PATH: &str = "equipped_items.json";
 
 #[derive(Component)]
 struct InventoryPanel;
@@ -82,6 +83,9 @@ struct EquipmentCatalog(Vec<EquipmentItem>);
 #[derive(Resource, Default)]
 struct Equipped([Option<usize>; 4]);
 
+#[derive(Deserialize, Serialize)]
+struct SavedEquipped([Option<String>; 4]);
+
 #[derive(Resource, Default)]
 pub(super) struct CurrentEquipmentModifiers(pub(super) EquipmentModifiers);
 
@@ -133,7 +137,10 @@ impl Plugin for InventoryPlugin {
         app.init_resource::<EquipmentCatalog>()
             .init_resource::<Equipped>()
             .init_resource::<CurrentEquipmentModifiers>()
-            .add_systems(Startup, (load_equipment, spawn_inventory_panels).chain())
+            .add_systems(
+                Startup,
+                (load_equipment, load_equipped, spawn_inventory_panels).chain(),
+            )
             .add_systems(
                 Update,
                 (
@@ -141,6 +148,7 @@ impl Plugin for InventoryPlugin {
                     unequip_on_double_click,
                     open_equipment_item_context_menu,
                     select_equipment_item_info,
+                    save_equipped,
                     sync_equipment_views,
                 ),
             );
@@ -157,6 +165,48 @@ fn load_equipment(mut catalog: ResMut<EquipmentCatalog>) {
         8,
         "equipment.json must define exactly eight items"
     );
+}
+
+fn load_equipped(mut equipped: ResMut<Equipped>, catalog: Res<EquipmentCatalog>) {
+    let contents = match std::fs::read_to_string(EQUIPPED_ITEMS_PATH) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            warn!("Could not read {EQUIPPED_ITEMS_PATH}: {error}");
+            return;
+        }
+    };
+    let saved = match serde_json::from_str::<SavedEquipped>(&contents) {
+        Ok(saved) => saved,
+        Err(error) => {
+            warn!("Could not parse {EQUIPPED_ITEMS_PATH}: {error}");
+            return;
+        }
+    };
+    for (slot, saved_name) in saved.0.into_iter().enumerate() {
+        equipped.0[slot] = saved_name.and_then(|name| {
+            catalog
+                .0
+                .iter()
+                .position(|item| item.name == name && Equipped::slot(item.kind) == slot)
+        });
+    }
+}
+
+fn save_equipped(equipped: Res<Equipped>, catalog: Res<EquipmentCatalog>) {
+    if !equipped.is_changed() {
+        return;
+    }
+    let saved = SavedEquipped(std::array::from_fn(|slot| {
+        equipped.0[slot].and_then(|index| catalog.0.get(index).map(|item| item.name.clone()))
+    }));
+    match serde_json::to_string_pretty(&saved)
+        .map_err(std::io::Error::other)
+        .and_then(|contents| std::fs::write(EQUIPPED_ITEMS_PATH, contents))
+    {
+        Ok(()) => {}
+        Err(error) => warn!("Could not save {EQUIPPED_ITEMS_PATH}: {error}"),
+    }
 }
 
 fn spawn_inventory_panels(
