@@ -1,5 +1,5 @@
 use crate::{hud, hud_layout::HudGrid};
-use bevy::{picking::hover::Hovered, prelude::*, ui::Pressed, ui_widgets::Button as UiButton};
+use bevy::{prelude::*, ui::Pressed, ui_widgets::Button as UiButton};
 use serde::Deserialize;
 
 const INVENTORY_KEY: &str = "Inventory";
@@ -369,27 +369,49 @@ fn open_equipment_item_context_menu(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
-    items: Query<(&Hovered, &InventoryItemButton)>,
-    equipped_icons: Query<(&Hovered, &EquippedItemIcon)>,
+    items: Query<(
+        &InventoryItemButton,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &InheritedVisibility,
+    )>,
+    equipped_icons: Query<(
+        &EquippedItemIcon,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &InheritedVisibility,
+    )>,
     menus: Query<Entity, With<EquipmentItemContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-    let index = items
-        .iter()
-        .next()
-        .map(|(_, InventoryItemButton(index))| *index)
-        .or_else(|| {
-            equipped_icons
-                .iter()
-                .next()
-                .map(|(_, EquippedItemIcon(index))| *index)
-        });
-    let Some(index) = index else {
+    let Some((cursor, scale_factor)) = window.and_then(|window| {
+        window
+            .cursor_position()
+            .map(|cursor| (cursor, window.scale_factor() as f32))
+    }) else {
         return;
     };
-    let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
+    let index = items
+        .iter()
+        .find_map(
+            |(InventoryItemButton(index), node, transform, visibility)| {
+                (visibility.get()
+                    && hud::ui_node_contains_cursor(cursor, scale_factor, node, *transform))
+                .then_some(*index)
+            },
+        )
+        .or_else(|| {
+            equipped_icons.iter().find_map(
+                |(EquippedItemIcon(index), node, transform, visibility)| {
+                    (visibility.get()
+                        && hud::ui_node_contains_cursor(cursor, scale_factor, node, *transform))
+                    .then_some(*index)
+                },
+            )
+        });
+    let Some(index) = index else {
         return;
     };
     for menu in &menus {

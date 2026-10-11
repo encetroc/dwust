@@ -1,5 +1,5 @@
 use super::*;
-use bevy::{picking::hover::Hovered, ui::Pressed, ui_widgets::Button as UiButton};
+use bevy::{ui::Pressed, ui_widgets::Button as UiButton};
 use serde::{Deserialize, Serialize};
 
 const GRID_W: i32 = 10;
@@ -773,16 +773,33 @@ fn open_ability_context_menu(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Option<Single<&Window, With<PrimaryWindow>>>,
-    abilities: Query<(&Hovered, &AbilityIcon)>,
+    abilities: Query<(
+        &AbilityIcon,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &InheritedVisibility,
+    )>,
     menus: Query<Entity, With<AbilityInfoContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-    let Some((_, AbilityIcon(index))) = abilities.iter().next() else {
+    let Some((cursor, scale_factor)) = window.and_then(|window| {
+        window
+            .cursor_position()
+            .map(|cursor| (cursor, window.scale_factor() as f32))
+    }) else {
         return;
     };
-    let Some(cursor) = window.and_then(|window| window.cursor_position()) else {
+    let Some(index) =
+        abilities
+            .iter()
+            .find_map(|(AbilityIcon(index), node, transform, visibility)| {
+                (visibility.get()
+                    && super::hud::ui_node_contains_cursor(cursor, scale_factor, node, *transform))
+                .then_some(*index)
+            })
+    else {
         return;
     };
     for menu in &menus {
@@ -809,7 +826,7 @@ fn open_ability_context_menu(
         ))
         .with_children(|menu| {
             menu.spawn((
-                AbilityInfoAction(*index),
+                AbilityInfoAction(index),
                 UiButton,
                 Node {
                     width: percent(100),

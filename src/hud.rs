@@ -3,7 +3,6 @@ use crate::{
     hud_layout::{self, HudGrid, SNAP},
 };
 use bevy::{
-    picking::hover::Hovered,
     prelude::*,
     ui::{Pressed, UiSystems},
     ui_widgets::Button as UiButton,
@@ -551,6 +550,15 @@ fn interact_with_hud_windows(
     }
 }
 
+pub(super) fn ui_node_contains_cursor(
+    cursor: Vec2,
+    scale_factor: f32,
+    node: &ComputedNode,
+    transform: UiGlobalTransform,
+) -> bool {
+    node.contains_point(transform, cursor * scale_factor)
+}
+
 fn interact_with_hud_context_menu(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -561,7 +569,7 @@ fn interact_with_hud_context_menu(
     menus: Query<Entity, With<HudContextMenu>>,
     close_buttons: Query<(&Pressed, &CloseHudWindow), Changed<Pressed>>,
     transient_windows: Query<(), With<TemporaryHudWindow>>,
-    buttons: Query<&Hovered, With<UiButton>>,
+    buttons: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility), With<UiButton>>,
 ) {
     state.suppress_world_click =
         menus.iter().next().is_some() && mouse.just_pressed(MouseButton::Left);
@@ -579,7 +587,9 @@ fn interact_with_hud_context_menu(
         state.suppress_world_click = true;
     }
 
-    let cursor = window.and_then(|window| window.cursor_position());
+    let (cursor, cursor_scale_factor) = window.map_or((None, 1.0), |window| {
+        (window.cursor_position(), window.scale_factor() as f32)
+    });
     let mut opened_menu = false;
     if mouse.just_pressed(MouseButton::Right)
         && let Some(cursor) = cursor
@@ -591,7 +601,11 @@ fn interact_with_hud_context_menu(
                 && cursor.y <= hud_window.position.y + hud_window.size.y;
             (inside && hud_window.visible && *visibility == Visibility::Visible).then_some(entity)
         });
-        if let Some(target) = target.filter(|_| buttons.is_empty()) {
+        let over_button = buttons.iter().any(|(node, transform, visibility)| {
+            visibility.get()
+                && ui_node_contains_cursor(cursor, cursor_scale_factor, node, *transform)
+        });
+        if let Some(target) = target.filter(|_| !over_button) {
             for menu in &menus {
                 commands.entity(menu).despawn();
             }
@@ -766,6 +780,35 @@ fn sync_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_hit_testing_uses_computed_ui_node_bounds_and_window_scale() {
+        let node = ComputedNode {
+            size: Vec2::splat(40.0),
+            ..default()
+        };
+        let transform = UiGlobalTransform::default();
+
+        assert!(ui_node_contains_cursor(Vec2::ZERO, 1.0, &node, transform));
+        assert!(ui_node_contains_cursor(
+            Vec2::splat(5.0),
+            2.0,
+            &node,
+            transform
+        ));
+        assert!(ui_node_contains_cursor(
+            Vec2::splat(15.0),
+            1.0,
+            &node,
+            transform
+        ));
+        assert!(!ui_node_contains_cursor(
+            Vec2::splat(15.0),
+            2.0,
+            &node,
+            transform
+        ));
+    }
 
     #[test]
     fn stat_categories_use_the_requested_semantic_colors() {
