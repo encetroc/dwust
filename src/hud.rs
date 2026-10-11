@@ -4,6 +4,7 @@ use crate::{
 };
 use bevy::{
     prelude::*,
+    scene::SceneScope,
     ui::{Pressed, UiSystems},
     ui_widgets::Button as UiButton,
 };
@@ -157,8 +158,9 @@ impl HudState {
 #[derive(Component)]
 struct StatsPanel;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum EquipmentStatValue {
+    #[default]
     Hp,
     Mp,
     Ap,
@@ -341,42 +343,69 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         HudModuleType::Both,
         true,
     );
-    commands.entity(content).with_children(|body| {
-        stat_cell(body, "Total HP", stat_color(StatCategory::Hp), 14.0);
-        equipment_stat_cell(body, "100", EquipmentStatValue::Hp);
-        stat_cell(body, "Total MP", stat_color(StatCategory::Mp), 14.0);
-        equipment_stat_cell(body, "3", EquipmentStatValue::Mp);
-        stat_cell(body, "Total AP", stat_color(StatCategory::Ap), 14.0);
-        equipment_stat_cell(body, "6", EquipmentStatValue::Ap);
-        stat_cell(
-            body,
-            "Physical Damage",
-            stat_color(StatCategory::Physical),
-            14.0,
-        );
-        equipment_stat_cell(body, "12%", EquipmentStatValue::PhysicalDamage);
-        stat_cell(
-            body,
-            "Magical Damage",
-            stat_color(StatCategory::Magical),
-            14.0,
-        );
-        equipment_stat_cell(body, "8%", EquipmentStatValue::MagicalDamage);
-        stat_cell(
-            body,
-            "Physical Defense",
-            stat_color(StatCategory::Physical),
-            14.0,
-        );
-        stat_cell(body, "0", stat_color(StatCategory::Physical), 16.0);
-        stat_cell(
-            body,
-            "Magical Defense",
-            stat_color(StatCategory::Magical),
-            14.0,
-        );
-        stat_cell(body, "0", stat_color(StatCategory::Magical), 16.0);
-    });
+    macro_rules! add_hud_scene {
+        ($scene:expr) => {
+            commands
+                .spawn_scene(SceneScope($scene))
+                .insert(ChildOf(content));
+        };
+    }
+    add_hud_scene!(stat_cell_scene(
+        "Total HP",
+        stat_color(StatCategory::Hp),
+        14.0
+    ));
+    add_hud_scene!(equipment_stat_cell_scene("100", EquipmentStatValue::Hp));
+    add_hud_scene!(stat_cell_scene(
+        "Total MP",
+        stat_color(StatCategory::Mp),
+        14.0
+    ));
+    add_hud_scene!(equipment_stat_cell_scene("3", EquipmentStatValue::Mp));
+    add_hud_scene!(stat_cell_scene(
+        "Total AP",
+        stat_color(StatCategory::Ap),
+        14.0
+    ));
+    add_hud_scene!(equipment_stat_cell_scene("6", EquipmentStatValue::Ap));
+    add_hud_scene!(stat_cell_scene(
+        "Physical Damage",
+        stat_color(StatCategory::Physical),
+        14.0
+    ));
+    add_hud_scene!(equipment_stat_cell_scene(
+        "12%",
+        EquipmentStatValue::PhysicalDamage
+    ));
+    add_hud_scene!(stat_cell_scene(
+        "Magical Damage",
+        stat_color(StatCategory::Magical),
+        14.0
+    ));
+    add_hud_scene!(equipment_stat_cell_scene(
+        "8%",
+        EquipmentStatValue::MagicalDamage
+    ));
+    add_hud_scene!(stat_cell_scene(
+        "Physical Defense",
+        stat_color(StatCategory::Physical),
+        14.0
+    ));
+    add_hud_scene!(stat_cell_scene(
+        "0",
+        stat_color(StatCategory::Physical),
+        16.0
+    ));
+    add_hud_scene!(stat_cell_scene(
+        "Magical Defense",
+        stat_color(StatCategory::Magical),
+        14.0
+    ));
+    add_hud_scene!(stat_cell_scene(
+        "0",
+        stat_color(StatCategory::Magical),
+        16.0
+    ));
     commands
         .spawn((
             SnapGrid,
@@ -420,25 +449,22 @@ fn setup_hud(mut commands: Commands, layout: Res<HudLayout>) {
         });
 }
 
-fn equipment_stat_cell(parent: &mut ChildSpawnerCommands, text: &str, stat: EquipmentStatValue) {
-    parent.spawn((
-        EquipmentStatValueEntity(stat),
-        Text::new(text),
-        TextFont {
-            font_size: FontSize::Px(16.0),
-            ..default()
-        },
+fn equipment_stat_cell_scene(text: &str, stat: EquipmentStatValue) -> impl Scene {
+    bsn! {
+        EquipmentStatValueEntity(stat)
+        Text({ text.to_owned() })
+        TextFont { font_size: px(16.0) }
         TextColor(stat_color(match stat {
             EquipmentStatValue::Hp => StatCategory::Hp,
             EquipmentStatValue::Mp => StatCategory::Mp,
             EquipmentStatValue::Ap => StatCategory::Ap,
             EquipmentStatValue::PhysicalDamage => StatCategory::Physical,
             EquipmentStatValue::MagicalDamage => StatCategory::Magical,
-        })),
-    ));
+        }))
+    }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct EquipmentStatValueEntity(EquipmentStatValue);
 
 fn update_equipment_stat_values(
@@ -463,16 +489,13 @@ fn update_equipment_stat_values(
     }
 }
 
-fn stat_cell(parent: &mut ChildSpawnerCommands, text: &str, color: Color, font_size: f32) {
-    parent.spawn((
-        Text::new(text),
-        TextFont {
-            font_size: FontSize::Px(font_size),
-            ..default()
-        },
-        TextColor(color),
-        TextLayout::new(Justify::Left, LineBreak::WordBoundary),
-    ));
+pub(super) fn stat_cell_scene(text: &str, color: Color, font_size: f32) -> impl Scene {
+    bsn! {
+        Text({ text.to_owned() })
+        TextFont { font_size: px(font_size) }
+        TextColor(color)
+        TextLayout::new(Justify::Left, LineBreak::WordBoundary)
+    }
 }
 
 fn initialize_hud_stack_positions(

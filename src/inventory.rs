@@ -1,5 +1,5 @@
 use crate::{hud, hud_layout::HudGrid};
-use bevy::{prelude::*, ui::Pressed, ui_widgets::Button as UiButton};
+use bevy::{prelude::*, scene::SceneScope, ui::Pressed, ui_widgets::Button as UiButton};
 use serde::{Deserialize, Serialize};
 
 const INVENTORY_KEY: &str = "Inventory";
@@ -112,16 +112,16 @@ impl Equipped {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct InventoryItemButton(usize);
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct InventoryItemLabel(usize);
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct EquippedItemIcon(usize);
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct EquipmentSlotView;
 
 #[derive(Component)]
@@ -227,42 +227,16 @@ fn spawn_inventory_panels(
         hud::HudModuleType::Both,
         false,
     );
-    commands
-        .entity(inventory_content)
-        .with_children(|inventory| {
-            for (index, item) in catalog.0.iter().enumerate() {
-                inventory
-                    .spawn((
-                        InventoryItemButton(index),
-                        Name::new(item.name.clone()),
-                        UiButton,
-                        Node {
-                            width: px(ABILITY_CELL_SIZE),
-                            height: px(ABILITY_CELL_SIZE),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(px(2.0)),
-                            ..default()
-                        },
-                        BackgroundColor(item.kind.color()),
-                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-                    ))
-                    .with_children(|icon| {
-                        icon.spawn((
-                            InventoryItemLabel(index),
-                            Text::new(item.letter.clone()),
-                            TextFont {
-                                font_size: FontSize::Px(18.0),
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
-            }
-            for _ in catalog.0.len()..50 {
-                empty_slot(inventory, ABILITY_CELL_SIZE);
-            }
-        });
+    for (index, item) in catalog.0.iter().enumerate() {
+        commands
+            .spawn_scene(inventory_item_scene(index, item))
+            .insert(ChildOf(inventory_content));
+    }
+    for _ in catalog.0.len()..50 {
+        commands
+            .spawn_scene(empty_slot_scene(ABILITY_CELL_SIZE))
+            .insert(ChildOf(inventory_content));
+    }
 
     let equipment_grid = HudGrid::from_tracks(
         vec![GridTrack::px(EQUIPMENT_CELL_SIZE)],
@@ -283,91 +257,110 @@ fn spawn_inventory_panels(
         hud::HudModuleType::Both,
         false,
     );
-    commands
-        .entity(equipment_content)
-        .with_children(|equipment| {
-            for kind in [
-                EquipmentType::Hat,
-                EquipmentType::Cape,
-                EquipmentType::Belt,
-                EquipmentType::Boots,
-            ] {
-                equipment
-                    .spawn((
-                        EquipmentSlotView,
-                        Node {
-                            width: px(EQUIPMENT_CELL_SIZE),
-                            height: px(EQUIPMENT_CELL_SIZE),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(px(1.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72)),
-                        BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
-                    ))
-                    .with_children(|slot| {
-                        slot.spawn((
-                            Text::new(kind.letter()),
-                            TextFont {
-                                font_size: FontSize::Px(14.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
-                            Pickable::IGNORE,
-                        ));
-                        for (index, item) in catalog
-                            .0
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, item)| item.kind == kind)
-                        {
-                            slot.spawn((
-                                EquippedItemIcon(index),
-                                UiButton,
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: px(0),
-                                    top: px(0),
-                                    width: px(EQUIPMENT_CELL_SIZE),
-                                    height: px(EQUIPMENT_CELL_SIZE),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(px(2.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(item.kind.color()),
-                                Visibility::Hidden,
-                            ))
-                            .with_children(|icon| {
-                                icon.spawn((
-                                    Text::new(item.letter.clone()),
-                                    TextFont {
-                                        font_size: FontSize::Px(22.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                    Pickable::IGNORE,
-                                ));
-                            });
-                        }
-                    });
-            }
-        });
+    for kind in [
+        EquipmentType::Hat,
+        EquipmentType::Cape,
+        EquipmentType::Belt,
+        EquipmentType::Boots,
+    ] {
+        let items = catalog
+            .0
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.kind == kind)
+            .collect::<Vec<_>>();
+        commands
+            .spawn_scene(equipment_slot_scene(kind, items))
+            .insert(ChildOf(equipment_content));
+    }
 }
 
-fn empty_slot(parent: &mut ChildSpawnerCommands, size: f32) {
-    parent.spawn((
+fn inventory_item_scene(index: usize, item: &EquipmentItem) -> impl Scene {
+    bsn! {
+        InventoryItemButton(index)
+        Name({ item.name.clone() })
+        UiButton
         Node {
-            width: px(size),
-            height: px(size),
+            width: px(ABILITY_CELL_SIZE),
+            height: px(ABILITY_CELL_SIZE),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(2.0)),
+        }
+        BackgroundColor({ item.kind.color() })
+        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35))
+        Children [
+            InventoryItemLabel(index)
+            @{icon_label_scene(item.letter.clone(), 18.0)}
+        ]
+    }
+}
+
+fn equipment_slot_scene(kind: EquipmentType, items: Vec<(usize, &EquipmentItem)>) -> impl Scene {
+    let icons: Vec<Box<dyn SceneList>> = items
+        .into_iter()
+        .map(|(index, item)| Box::from(SceneScope(equipped_item_scene(index, item))))
+        .collect();
+    bsn! {
+        EquipmentSlotView
+        Node {
+            width: px(EQUIPMENT_CELL_SIZE),
+            height: px(EQUIPMENT_CELL_SIZE),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             border: UiRect::all(px(1.0)),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72)),
-        BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
-        Pickable::IGNORE,
-    ));
+        }
+        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72))
+        BorderColor::all(Color::srgb(0.30, 0.40, 0.52))
+        Children [
+            Text({ kind.letter() })
+            TextFont { font_size: px(14.0) }
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55))
+            Pickable::IGNORE
+            --
+            {icons}
+        ]
+    }
+}
+
+fn equipped_item_scene(index: usize, item: &EquipmentItem) -> impl Scene {
+    bsn! {
+        EquippedItemIcon(index)
+        UiButton
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px(0),
+            width: px(EQUIPMENT_CELL_SIZE),
+            height: px(EQUIPMENT_CELL_SIZE),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(2.0)),
+        }
+        BackgroundColor({ item.kind.color() })
+        Visibility::Hidden
+        Children [
+            @{icon_label_scene(item.letter.clone(), 22.0)}
+        ]
+    }
+}
+
+pub(super) fn icon_label_scene(label: String, font_size: f32) -> impl Scene {
+    bsn! {
+        Text({ label })
+        TextFont { font_size: px(font_size) }
+        TextColor(Color::WHITE)
+        Pickable::IGNORE
+    }
+}
+
+pub(super) fn empty_slot_scene(size: f32) -> impl Scene {
+    bsn! {
+        Node { width: px(size), height: px(size), border: UiRect::all(px(1.0)) }
+        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72))
+        BorderColor::all(Color::srgb(0.30, 0.40, 0.52))
+        Pickable::IGNORE
+    }
 }
 
 fn equip_on_double_click(
@@ -535,47 +528,43 @@ fn select_equipment_item_info(
         hud::HudModuleType::Both,
         true,
     );
-    commands.entity(content).with_children(|body| {
-        body.spawn((
-            Text::new(format!("{} - {:?}", item.name, item.kind)),
-            TextFont {
-                font_size: FontSize::Px(16.0),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-        ));
-        for (line, category) in [
-            (
-                format!("Total HP {:+}", item.modifiers.max_hp),
-                hud::StatCategory::Hp,
-            ),
-            (
-                format!("Total MP {:+}", item.modifiers.mp),
-                hud::StatCategory::Mp,
-            ),
-            (
-                format!("Total AP {:+}", item.modifiers.ap),
-                hud::StatCategory::Ap,
-            ),
-            (
-                format!("Physical Damage {:+}%", item.modifiers.physical_damage),
-                hud::StatCategory::Physical,
-            ),
-            (
-                format!("Magical Damage {:+}%", item.modifiers.magical_damage),
-                hud::StatCategory::Magical,
-            ),
-        ] {
-            body.spawn((
-                Text::new(line),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(hud::stat_color(category)),
-            ));
-        }
-    });
+    commands
+        .spawn_scene(SceneScope(hud::stat_cell_scene(
+            &format!("{} - {:?}", item.name, item.kind),
+            Color::WHITE,
+            16.0,
+        )))
+        .insert(ChildOf(content));
+    for (line, category) in [
+        (
+            format!("Total HP {:+}", item.modifiers.max_hp),
+            hud::StatCategory::Hp,
+        ),
+        (
+            format!("Total MP {:+}", item.modifiers.mp),
+            hud::StatCategory::Mp,
+        ),
+        (
+            format!("Total AP {:+}", item.modifiers.ap),
+            hud::StatCategory::Ap,
+        ),
+        (
+            format!("Physical Damage {:+}%", item.modifiers.physical_damage),
+            hud::StatCategory::Physical,
+        ),
+        (
+            format!("Magical Damage {:+}%", item.modifiers.magical_damage),
+            hud::StatCategory::Magical,
+        ),
+    ] {
+        commands
+            .spawn_scene(SceneScope(hud::stat_cell_scene(
+                &line,
+                hud::stat_color(category),
+                14.0,
+            )))
+            .insert(ChildOf(content));
+    }
 }
 
 fn sync_equipment_views(

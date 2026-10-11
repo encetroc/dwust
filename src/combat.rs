@@ -1,5 +1,5 @@
 use super::*;
-use bevy::{ui::Pressed, ui_widgets::Button as UiButton};
+use bevy::{scene::SceneScope, ui::Pressed, ui_widgets::Button as UiButton};
 use serde::{Deserialize, Serialize};
 
 const GRID_W: i32 = 10;
@@ -116,7 +116,7 @@ struct CombatTile {
 #[derive(Component)]
 struct MovementRangeTile(IVec2);
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct CombatPreparation;
 
 #[derive(Component)]
@@ -238,11 +238,12 @@ struct Session {
 #[derive(Component)]
 struct CombatStats;
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone, Copy, Default)]
 struct CombatStatCell(CombatStat);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum CombatStat {
+    #[default]
     Hp,
     Mp,
     Ap,
@@ -251,7 +252,7 @@ enum CombatStat {
 #[derive(Component)]
 struct CombatSpells;
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy, Default)]
 struct AbilityIcon(usize);
 
 #[derive(Component)]
@@ -263,14 +264,32 @@ struct AbilityInfoAction(usize);
 #[derive(Component)]
 struct CombatTimeline;
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 struct TimelineEntryName(Entity);
 
-#[derive(Component)]
+impl Default for TimelineEntryName {
+    fn default() -> Self {
+        Self(Entity::PLACEHOLDER)
+    }
+}
+
+#[derive(Component, Clone, Copy)]
 struct TimelineEntryHealth(Entity);
 
-#[derive(Component)]
+impl Default for TimelineEntryHealth {
+    fn default() -> Self {
+        Self(Entity::PLACEHOLDER)
+    }
+}
+
+#[derive(Component, Clone, Copy)]
 struct TimelineHealthBar(Entity);
+
+impl Default for TimelineHealthBar {
+    fn default() -> Self {
+        Self(Entity::PLACEHOLDER)
+    }
+}
 
 pub(super) struct CombatPlugin;
 
@@ -346,61 +365,46 @@ fn spawn_shared_combat_modules(mut commands: Commands, book: Res<SpellBook>) {
         super::hud::HudModuleType::Both,
         true,
     );
-    commands.entity(abilities_content).with_children(|grid| {
-        let mut used_letters = Vec::new();
-        for (index, spell) in book.0.iter().enumerate() {
-            let letter = spell
-                .name
-                .chars()
-                .find(|character| {
-                    character.is_ascii_alphabetic()
-                        && !used_letters.contains(&character.to_ascii_uppercase())
-                })
-                .unwrap_or('?')
-                .to_ascii_uppercase();
-            used_letters.push(letter);
-            let color = ability_color(spell);
-            grid.spawn((
-                AbilityIcon(index),
-                UiButton,
-                Node {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(px(2)),
-                    ..default()
-                },
-                BackgroundColor(color),
-                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-            ))
-            .with_children(|icon| {
-                icon.spawn((
-                    Text::new(letter.to_string()),
-                    TextFont {
-                        font_size: FontSize::Px(18.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ));
-            });
-        }
-        for _ in book.0.len().min(20)..20 {
-            spawn_empty_ability_slot(grid);
-        }
-    });
+    let mut used_letters = Vec::new();
+    for (index, spell) in book.0.iter().enumerate().take(20) {
+        let letter = spell
+            .name
+            .chars()
+            .find(|character| {
+                character.is_ascii_alphabetic()
+                    && !used_letters.contains(&character.to_ascii_uppercase())
+            })
+            .unwrap_or('?')
+            .to_ascii_uppercase();
+        used_letters.push(letter);
+        commands
+            .spawn_scene(ability_icon_scene(index, letter, ability_color(spell)))
+            .insert(ChildOf(abilities_content));
+    }
+    for _ in book.0.len().min(20)..20 {
+        commands
+            .spawn_scene(super::inventory::empty_slot_scene(36.0))
+            .insert(ChildOf(abilities_content));
+    }
 }
 
-fn spawn_empty_ability_slot(parent: &mut ChildSpawnerCommands) {
-    parent.spawn((
+fn ability_icon_scene(index: usize, letter: char, color: Color) -> impl Scene {
+    bsn! {
+        AbilityIcon(index)
+        UiButton
         Node {
             width: px(36.0),
             height: px(36.0),
-            border: UiRect::all(px(1.0)),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.12, 0.15, 0.20, 0.72)),
-        BorderColor::all(Color::srgb(0.30, 0.40, 0.52)),
-        Pickable::IGNORE,
-    ));
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(2.0)),
+        }
+        BackgroundColor(color)
+        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35))
+        Children [
+            @{super::inventory::icon_label_scene(letter.to_string(), 18.0)}
+        ]
+    }
 }
 
 fn spawn_world_enemies(
@@ -596,17 +600,9 @@ fn enter_combat(
         super::hud::HudModuleType::CombatOnly,
         true,
     );
-    commands.entity(phase_content).with_children(|grid| {
-        grid.spawn((
-            CombatPreparation,
-            Text::new("Preparation Phase"),
-            TextFont {
-                font_size: FontSize::Px(16.0),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-        ));
-    });
+    commands
+        .spawn_scene(combat_preparation_scene())
+        .insert(ChildOf(phase_content));
 
     let stats_grid = super::hud_layout::HudGrid::content_sized(
         3,
@@ -625,19 +621,11 @@ fn enter_combat(
         super::hud::HudModuleType::CombatOnly,
         true,
     );
-    commands.entity(stats_content).with_children(|grid| {
-        for stat in [CombatStat::Hp, CombatStat::Mp, CombatStat::Ap] {
-            grid.spawn((
-                CombatStatCell(stat),
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(16.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-        }
-    });
+    for stat in [CombatStat::Hp, CombatStat::Mp, CombatStat::Ap] {
+        commands
+            .spawn_scene(combat_stat_cell_scene(stat))
+            .insert(ChildOf(stats_content));
+    }
 
     let timeline_grid = super::hud_layout::HudGrid::content_sized(
         1,
@@ -656,65 +644,95 @@ fn enter_combat(
         super::hud::HudModuleType::CombatOnly,
         true,
     );
-    commands.entity(timeline_content).with_children(|entries| {
-        for unit in turn_order.entities.iter().copied() {
-            let item_grid = super::hud_layout::HudGrid::from_tracks(
-                vec![GridTrack::flex(1.0), GridTrack::auto()],
-                vec![GridTrack::auto(), GridTrack::px(5.0)],
-                8.0,
-                2.0,
-                UiRect::axes(px(6.0), px(2.0)),
-            );
-            entries
-                .spawn((
-                    item_grid.node(),
-                    BackgroundColor(Color::srgba(0.15, 0.19, 0.24, 0.9)),
-                    Pickable::IGNORE,
-                ))
-                .with_children(|entry| {
-                    entry.spawn((
-                        TimelineEntryName(unit),
-                        Text::new(""),
-                        TextFont {
-                            font_size: FontSize::Px(12.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                    entry.spawn((
-                        TimelineEntryHealth(unit),
-                        Text::new(""),
-                        TextFont {
-                            font_size: FontSize::Px(12.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                    entry
-                        .spawn((
-                            Node {
-                                grid_column: GridPlacement::span(2),
-                                height: px(5.0),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.20, 0.08, 0.09)),
-                            Pickable::IGNORE,
-                        ))
-                        .with_children(|track| {
-                            track.spawn((
-                                TimelineHealthBar(unit),
-                                Node {
-                                    width: percent(100),
-                                    height: percent(100),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgb(0.88, 0.12, 0.16)),
-                                Pickable::IGNORE,
-                            ));
-                        });
-                });
+    for unit in turn_order.entities.iter().copied() {
+        let entry = commands
+            .spawn_scene(timeline_entry_scene())
+            .insert(ChildOf(timeline_content))
+            .id();
+        commands
+            .spawn_scene(timeline_entry_name_scene(unit))
+            .insert(ChildOf(entry));
+        commands
+            .spawn_scene(timeline_entry_health_scene(unit))
+            .insert(ChildOf(entry));
+        let track = commands
+            .spawn_scene(timeline_health_track_scene())
+            .insert(ChildOf(entry))
+            .id();
+        commands
+            .spawn_scene(timeline_health_bar_scene(unit))
+            .insert(ChildOf(track));
+    }
+}
+
+fn combat_preparation_scene() -> impl Scene {
+    bsn! {
+        CombatPreparation
+        Text("Preparation Phase")
+        TextFont { font_size: px(16.0) }
+        TextColor(Color::WHITE)
+    }
+}
+
+fn combat_stat_cell_scene(stat: CombatStat) -> impl Scene {
+    bsn! {
+        CombatStatCell(stat)
+        Text("")
+        TextFont { font_size: px(16.0) }
+        TextColor(Color::WHITE)
+    }
+}
+
+fn timeline_entry_scene() -> impl Scene {
+    bsn! {
+        Node {
+            display: Display::Grid,
+            width: auto(),
+            height: auto(),
+            grid_template_columns: vec![GridTrack::flex(1.0), GridTrack::auto()],
+            grid_template_rows: vec![GridTrack::auto(), GridTrack::px(5.0)],
+            column_gap: px(8.0),
+            row_gap: px(2.0),
+            padding: UiRect::axes(px(6.0), px(2.0)),
         }
-    });
+        BackgroundColor(Color::srgba(0.15, 0.19, 0.24, 0.9))
+        Pickable::IGNORE
+    }
+}
+
+fn timeline_entry_name_scene(unit: Entity) -> impl Scene {
+    bsn! {
+        TimelineEntryName(unit)
+        Text("")
+        TextFont { font_size: px(12.0) }
+        TextColor(Color::WHITE)
+    }
+}
+
+fn timeline_entry_health_scene(unit: Entity) -> impl Scene {
+    bsn! {
+        TimelineEntryHealth(unit)
+        Text("")
+        TextFont { font_size: px(12.0) }
+        TextColor(Color::WHITE)
+    }
+}
+
+fn timeline_health_track_scene() -> impl Scene {
+    bsn! {
+        Node { grid_column: GridPlacement::span(2), height: px(5.0) }
+        BackgroundColor(Color::srgb(0.20, 0.08, 0.09))
+        Pickable::IGNORE
+    }
+}
+
+fn timeline_health_bar_scene(unit: Entity) -> impl Scene {
+    bsn! {
+        TimelineHealthBar(unit)
+        Node { width: percent(100), height: percent(100) }
+        BackgroundColor(Color::srgb(0.88, 0.12, 0.16))
+        Pickable::IGNORE
+    }
 }
 
 fn spawn_unit(
@@ -889,85 +907,80 @@ fn select_ability_info(
         super::hud::HudModuleType::Both,
         true,
     );
-    commands.entity(content).with_children(|body| {
-        ability_info_line(body, &spell.name, Color::WHITE);
-        if !spell.description.is_empty() {
-            ability_info_line(
-                body,
-                &spell.description,
-                super::hud::stat_color(super::hud::StatCategory::Neutral),
-            );
-        }
-        ability_info_line(
-            body,
-            &format!("AP Cost: {}", spell.ap_cost),
-            super::hud::stat_color(super::hud::StatCategory::Ap),
+    macro_rules! add_info_line {
+        ($text:expr, $color:expr) => {
+            commands
+                .spawn_scene(SceneScope(ability_info_line_scene($text, $color)))
+                .insert(ChildOf(content));
+        };
+    }
+    add_info_line!(spell.name.clone(), Color::WHITE);
+    if !spell.description.is_empty() {
+        add_info_line!(
+            spell.description.clone(),
+            super::hud::stat_color(super::hud::StatCategory::Neutral)
         );
-        ability_info_line(
-            body,
-            &format!("Range: {}", spell.range),
-            super::hud::stat_color(super::hud::StatCategory::Neutral),
-        );
-        ability_info_line(
-            body,
-            &format!("Target: {:?}", spell.target),
-            super::hud::stat_color(super::hud::StatCategory::Neutral),
-        );
-        ability_info_line(
-            body,
-            &format!(
-                "Area: {}x{}",
-                spell.area.first().map_or(0, Vec::len),
-                spell.area.len()
+    }
+    add_info_line!(
+        format!("AP Cost: {}", spell.ap_cost),
+        super::hud::stat_color(super::hud::StatCategory::Ap)
+    );
+    add_info_line!(
+        format!("Range: {}", spell.range),
+        super::hud::stat_color(super::hud::StatCategory::Neutral)
+    );
+    add_info_line!(
+        format!("Target: {:?}", spell.target),
+        super::hud::stat_color(super::hud::StatCategory::Neutral)
+    );
+    add_info_line!(
+        format!(
+            "Area: {}x{}",
+            spell.area.first().map_or(0, Vec::len),
+            spell.area.len()
+        ),
+        super::hud::stat_color(super::hud::StatCategory::Neutral)
+    );
+    if spell.base_damage > 0 {
+        let category = match spell.damage_type {
+            DamageType::Physical => super::hud::StatCategory::Physical,
+            DamageType::Magical => super::hud::StatCategory::Magical,
+        };
+        add_info_line!(
+            format!(
+                "{} Damage: {}",
+                match spell.damage_type {
+                    DamageType::Physical => "Physical",
+                    DamageType::Magical => "Magical",
+                },
+                spell.base_damage
             ),
-            super::hud::stat_color(super::hud::StatCategory::Neutral),
+            super::hud::stat_color(category)
         );
-        if spell.base_damage > 0 {
-            let category = match spell.damage_type {
-                DamageType::Physical => super::hud::StatCategory::Physical,
-                DamageType::Magical => super::hud::StatCategory::Magical,
-            };
-            ability_info_line(
-                body,
-                &format!(
-                    "{} Damage: {}",
-                    match spell.damage_type {
-                        DamageType::Physical => "Physical",
-                        DamageType::Magical => "Magical",
-                    },
-                    spell.base_damage
-                ),
-                super::hud::stat_color(category),
-            );
-        }
-        for effect in &spell.effects {
-            let suffix = match effect.stat {
-                SpellStat::PhysicalDamage | SpellStat::MagicalDamage => "%",
-                _ => "",
-            };
-            ability_info_line(
-                body,
-                &format!(
-                    "{}: {:+}{suffix}",
-                    spell_stat_label(effect.stat),
-                    effect.amount
-                ),
-                spell_stat_color(effect.stat),
-            );
-        }
-    });
+    }
+    for effect in &spell.effects {
+        let suffix = match effect.stat {
+            SpellStat::PhysicalDamage | SpellStat::MagicalDamage => "%",
+            _ => "",
+        };
+        add_info_line!(
+            format!(
+                "{}: {:+}{suffix}",
+                spell_stat_label(effect.stat),
+                effect.amount
+            ),
+            spell_stat_color(effect.stat)
+        );
+    }
 }
 
-fn ability_info_line(parent: &mut ChildSpawnerCommands, text: &str, color: Color) {
-    parent.spawn((
-        Text::new(text.to_owned()),
-        TextFont {
-            font_size: FontSize::Px(14.0),
-            ..default()
-        },
-        TextColor(color),
-        TextLayout::new(Justify::Left, LineBreak::WordBoundary),
-    ));
+fn ability_info_line_scene(text: String, color: Color) -> impl Scene {
+    bsn! {
+        Text({ text })
+        TextFont { font_size: px(14.0) }
+        TextColor(color)
+        TextLayout::new(Justify::Left, LineBreak::WordBoundary)
+    }
 }
 
 fn spell_stat_label(stat: SpellStat) -> &'static str {
