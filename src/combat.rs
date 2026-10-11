@@ -779,7 +779,6 @@ fn open_ability_context_menu(
         &UiGlobalTransform,
         &InheritedVisibility,
     )>,
-    menus: Query<Entity, With<AbilityInfoContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -787,7 +786,7 @@ fn open_ability_context_menu(
     let Some((cursor, scale_factor)) = window.and_then(|window| {
         window
             .cursor_position()
-            .map(|cursor| (cursor, window.scale_factor() as f32))
+            .map(|cursor| (cursor, window.scale_factor()))
     }) else {
         return;
     };
@@ -802,9 +801,6 @@ fn open_ability_context_menu(
     else {
         return;
     };
-    for menu in &menus {
-        commands.entity(menu).despawn();
-    }
     let position = crate::hud_layout::constrain_panel_position(cursor, Vec2::new(112.0, 36.0));
     commands
         .spawn((
@@ -853,15 +849,11 @@ fn select_ability_info(
     mut commands: Commands,
     book: Res<SpellBook>,
     actions: Query<(&Pressed, &AbilityInfoAction), Changed<Pressed>>,
-    menus: Query<Entity, With<AbilityInfoContextMenu>>,
     window: Option<Single<&Window, With<PrimaryWindow>>>,
 ) {
     let Some((_, AbilityInfoAction(index))) = actions.iter().next() else {
         return;
     };
-    for menu in &menus {
-        commands.entity(menu).despawn();
-    }
     let Some(spell) = book.0.get(*index) else {
         return;
     };

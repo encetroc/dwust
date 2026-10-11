@@ -381,7 +381,6 @@ fn open_equipment_item_context_menu(
         &UiGlobalTransform,
         &InheritedVisibility,
     )>,
-    menus: Query<Entity, With<EquipmentItemContextMenu>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -389,7 +388,7 @@ fn open_equipment_item_context_menu(
     let Some((cursor, scale_factor)) = window.and_then(|window| {
         window
             .cursor_position()
-            .map(|cursor| (cursor, window.scale_factor() as f32))
+            .map(|cursor| (cursor, window.scale_factor()))
     }) else {
         return;
     };
@@ -414,9 +413,6 @@ fn open_equipment_item_context_menu(
     let Some(index) = index else {
         return;
     };
-    for menu in &menus {
-        commands.entity(menu).despawn();
-    }
     let position = crate::hud_layout::constrain_panel_position(cursor, Vec2::new(112.0, 36.0));
     commands
         .spawn((
@@ -465,16 +461,12 @@ fn select_equipment_item_info(
     mut commands: Commands,
     catalog: Res<EquipmentCatalog>,
     actions: Query<(&Pressed, &EquipmentItemInfoAction), Changed<Pressed>>,
-    menus: Query<Entity, With<EquipmentItemContextMenu>>,
     window: Option<Single<&Window, With<bevy::window::PrimaryWindow>>>,
 ) {
     let Some((_, action)) = actions.iter().next() else {
         return;
     };
     let index = action.0;
-    for menu in &menus {
-        commands.entity(menu).despawn();
-    }
     let Some(item) = catalog.0.get(index) else {
         return;
     };

@@ -549,6 +549,7 @@ fn set_destination(
     enemies: Query<(Entity, &GlobalTransform), With<combat::WorldEnemy>>,
     viewport: Res<GameViewport>,
     hud: Res<hud::HudState>,
+    context_menus: Query<(), With<hud::HudContextMenu>>,
     camera: Single<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut player: Single<&mut Player>,
 ) {
@@ -558,6 +559,7 @@ fn set_destination(
     }
     if !mouse.just_pressed(MouseButton::Left)
         || pointer.hovered.is_some()
+        || !context_menus.is_empty()
         || viewport
             .cursor
             .is_some_and(|cursor| hud.contains_cursor(cursor))

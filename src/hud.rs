@@ -588,7 +588,7 @@ fn interact_with_hud_context_menu(
     }
 
     let (cursor, cursor_scale_factor) = window.map_or((None, 1.0), |window| {
-        (window.cursor_position(), window.scale_factor() as f32)
+        (window.cursor_position(), window.scale_factor())
     });
     let mut opened_menu = false;
     if mouse.just_pressed(MouseButton::Right)
